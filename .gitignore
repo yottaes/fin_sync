@@ -1,7 +1,6 @@
 /target
 
 docs/
-bacon.toml
 
 .env
 .envrc
