@@ -6,10 +6,18 @@ Generic by design: it plugs into any financial pipeline where multiple systems m
 
 ## 🚀 Core Philosophy
 
-- **The Judge, Not the Extractor:** The service expects upstream systems to provide structured, typed data (JSON). It compares states and issues verdicts; it does not parse raw documents.
-- **Strict Schema Validation (Fail Fast):** Incoming data must strictly conform to expected schemas. Missing fields, wrong types, or out-of-bounds values immediately return a `422 Unprocessable Entity`. No partial parsing, no silent failures.
-- **Type-Driven Money Handling:** All monetary amounts are represented as `i64` in the smallest currency unit (e.g., cents). Floating-point numbers are strictly prohibited. The custom `MoneyAmount` type is always paired with a `Currency` enum, making currency mismatches a compile-time error.
-- **Pure Push Model (MVP):** `fin-sync` relies entirely on webhooks and external data pushes. It does not poll or fetch data from external APIs, ensuring predictable load and immediate reactivity.
+- **The Judge, Not the Extractor:** The service expects upstream systems to provide structured, typed data (JSON).
+  It compares states and issues verdicts; it does not parse raw documents.
+
+- **Strict Schema Validation (Fail Fast):** Incoming data must strictly conform to expected schemas. Missing fields, wrong types,
+  or out-of-bounds values immediately return a `422 Unprocessable Entity`. No partial parsing, no silent failures.
+
+- **Type-Driven Money Handling:** All monetary amounts are represented as `i64` in the smallest currency unit (e.g., cents).
+  Floating-point numbers are strictly prohibited. The custom `MoneyAmount` type is always paired with a `Currency` enum,
+  making currency mismatches a compile-time error.
+
+- **Pure Push Model (MVP):** `fin-sync` relies entirely on webhooks and external data pushes. It does not poll or
+  fetch data from external APIs, ensuring predictable load and immediate reactivity.
 
 ## 🏗 Architecture & Data Flow
 
