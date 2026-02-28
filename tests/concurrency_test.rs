@@ -1,15 +1,15 @@
 mod common;
 
 use common::*;
-use frg::domain::payment::PaymentStatus;
-use frg::infra::postgres::payment_repo::{log_passthrough_event, process_payment_event, ProcessResult};
+use fin_sync::domain::payment::PaymentStatus;
+use fin_sync::infra::postgres::payment_repo::{log_passthrough_event, process_payment_event, ProcessResult};
 
 // ── 26. concurrent_duplicate_events ────────────────────────────────────────
 // 10 tasks send the same event_id. Exactly 1 should get Created, rest Duplicate.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_duplicate_events() {
-    let pool = setup_pool("frg_test_concurrency").await;
+    let pool = setup_pool("fin_sync_test_concurrency").await;
 
     let mut handles = Vec::new();
     for i in 0..10 {
@@ -41,7 +41,7 @@ async fn concurrent_duplicate_events() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_updates_same_external_id() {
-    let pool = setup_pool("frg_test_concurrency").await;
+    let pool = setup_pool("fin_sync_test_concurrency").await;
 
     let p = make_payment("pi_cser", "evt_cser_init", PaymentStatus::Pending, 1000);
     process_payment_event(&pool, &p).await.unwrap();
@@ -80,7 +80,7 @@ async fn concurrent_updates_same_external_id() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_passthrough_dedup() {
-    let pool = setup_pool("frg_test_concurrency").await;
+    let pool = setup_pool("fin_sync_test_concurrency").await;
     let payload = serde_json::json!({"type": "charge.created"});
 
     let mut handles = Vec::new();
@@ -114,7 +114,7 @@ async fn concurrent_passthrough_dedup() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn advisory_lock_prevents_double_insert() {
-    let pool = setup_pool("frg_test_concurrency").await;
+    let pool = setup_pool("fin_sync_test_concurrency").await;
 
     let mut handles = Vec::new();
     for i in 0..2 {

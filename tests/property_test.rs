@@ -1,5 +1,5 @@
-use frg::domain::money::MoneyAmount;
-use frg::domain::payment::PaymentStatus;
+use fin_sync::domain::money::MoneyAmount;
+use fin_sync::domain::payment::PaymentStatus;
 use proptest::prelude::*;
 
 fn arb_status() -> impl Strategy<Value = PaymentStatus> {

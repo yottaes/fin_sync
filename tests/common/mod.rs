@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use frg::domain::money::{Currency, Money, MoneyAmount};
-use frg::domain::payment::{NewPayment, NewPaymentParams, PaymentDirection, PaymentStatus};
+use fin_sync::domain::money::{Currency, Money, MoneyAmount};
+use fin_sync::domain::payment::{NewPayment, NewPaymentParams, PaymentDirection, PaymentStatus};
 use sqlx::PgPool;
 use std::sync::Once;
 
@@ -12,7 +12,7 @@ static INIT_ONCE: Once = Once::new();
 /// Creates a dedicated database for this test binary, runs migrations, and truncates.
 /// Each binary gets full isolation — no cross-binary interference.
 ///
-/// `db_name` should be unique per test file (e.g. "frg_test_payment", "frg_test_concurrency").
+/// `db_name` should be unique per test file (e.g. "fin_sync_test_payment", "fin_sync_test_concurrency").
 pub async fn setup_pool(db_name: &str) -> PgPool {
     let db_url = format!("postgresql://postgres:password@localhost:5432/{db_name}");
 

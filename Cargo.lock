@@ -452,6 +452,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
+name = "fin_sync"
+version = "0.1.0"
+dependencies = [
+ "async-stripe",
+ "axum",
+ "chrono",
+ "derive_more",
+ "dotenvy",
+ "proptest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "uuid 1.21.0",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -502,27 +523,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
-]
-
-[[package]]
-name = "frg"
-version = "0.1.0"
-dependencies = [
- "async-stripe",
- "axum",
- "chrono",
- "derive_more",
- "dotenvy",
- "proptest",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 2.0.18",
- "tokio",
- "tower",
- "tracing",
- "tracing-subscriber",
- "uuid 1.21.0",
 ]
 
 [[package]]

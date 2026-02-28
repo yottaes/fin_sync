@@ -1,14 +1,14 @@
 mod common;
 
 use common::*;
-use frg::domain::payment::PaymentStatus;
-use frg::infra::postgres::payment_repo::{log_passthrough_event, process_payment_event};
+use fin_sync::domain::payment::PaymentStatus;
+use fin_sync::infra::postgres::payment_repo::{log_passthrough_event, process_payment_event};
 
 // ── 21. passthrough_logs_event ─────────────────────────────────────────────
 
 #[tokio::test]
 async fn passthrough_logs_event() {
-    let pool = setup_pool("frg_test_passthrough").await;
+    let pool = setup_pool("fin_sync_test_passthrough").await;
     let payload = serde_json::json!({"type": "charge.created"});
 
     let result = log_passthrough_event(
@@ -36,7 +36,7 @@ async fn passthrough_logs_event() {
 
 #[tokio::test]
 async fn passthrough_duplicate_returns_false() {
-    let pool = setup_pool("frg_test_passthrough").await;
+    let pool = setup_pool("fin_sync_test_passthrough").await;
     let payload = serde_json::json!({"type": "charge.created"});
 
     let r1 = log_passthrough_event(&pool, Some("pi_ptd"), "evt_ptd_1", "charge.created", 1000, &payload)
@@ -54,7 +54,7 @@ async fn passthrough_duplicate_returns_false() {
 
 #[tokio::test]
 async fn passthrough_links_existing_payment() {
-    let pool = setup_pool("frg_test_passthrough").await;
+    let pool = setup_pool("fin_sync_test_passthrough").await;
 
     // Create a payment first
     let p = make_payment("pi_ptlink", "evt_ptlink_create", PaymentStatus::Pending, 1000);
@@ -84,7 +84,7 @@ async fn passthrough_links_existing_payment() {
 
 #[tokio::test]
 async fn passthrough_no_existing_payment() {
-    let pool = setup_pool("frg_test_passthrough").await;
+    let pool = setup_pool("fin_sync_test_passthrough").await;
     let payload = serde_json::json!({"type": "charge.created"});
 
     log_passthrough_event(&pool, Some("pi_nonexistent"), "evt_ptnone", "charge.created", 1000, &payload)
@@ -107,7 +107,7 @@ async fn passthrough_no_existing_payment() {
 
 #[tokio::test]
 async fn passthrough_with_none_external_id() {
-    let pool = setup_pool("frg_test_passthrough").await;
+    let pool = setup_pool("fin_sync_test_passthrough").await;
     let payload = serde_json::json!({"type": "unknown.event"});
 
     let result = log_passthrough_event(&pool, None, "evt_ptnull", "unknown.event", 1000, &payload)

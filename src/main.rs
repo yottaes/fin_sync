@@ -25,7 +25,7 @@ async fn main() {
         .await
         .expect("failed to connect to database");
 
-    let state = frg::AppState {
+    let state = fin_sync::AppState {
         pool,
         stripe_webhook_secret: stripe_webhook_secret.into(),
     };
@@ -34,7 +34,7 @@ async fn main() {
         .route("/", get(|| async { "ok" }))
         .route(
             "/webhook",
-            post(frg::adapters::stripe::stripe_webhook_handler),
+            post(fin_sync::adapters::stripe::stripe_webhook_handler),
         )
         .layer(DefaultBodyLimit::max(64 * 1024)) // 64 KB — Stripe events are typically <20 KB
         .with_state(state);

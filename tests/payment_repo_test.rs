@@ -1,14 +1,14 @@
 mod common;
 
 use common::*;
-use frg::domain::payment::PaymentStatus;
-use frg::infra::postgres::payment_repo::{process_payment_event, ProcessResult};
+use fin_sync::domain::payment::PaymentStatus;
+use fin_sync::infra::postgres::payment_repo::{process_payment_event, ProcessResult};
 
 // ── 1. create_new_payment ──────────────────────────────────────────────────
 
 #[tokio::test]
 async fn create_new_payment() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p = make_payment("pi_create_1", "evt_c1", PaymentStatus::Pending, 1000);
 
     let result = process_payment_event(&pool, &p).await.unwrap();
@@ -26,7 +26,7 @@ async fn create_new_payment() {
 
 #[tokio::test]
 async fn create_writes_audit_entry() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p = make_payment("pi_audit_1", "evt_a1", PaymentStatus::Pending, 1000);
     process_payment_event(&pool, &p).await.unwrap();
 
@@ -40,7 +40,7 @@ async fn create_writes_audit_entry() {
 
 #[tokio::test]
 async fn transition_pending_to_succeeded() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_trans_s", "evt_t1", PaymentStatus::Pending, 1000);
     process_payment_event(&pool, &p1).await.unwrap();
 
@@ -57,7 +57,7 @@ async fn transition_pending_to_succeeded() {
 
 #[tokio::test]
 async fn transition_pending_to_failed() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_trans_f", "evt_tf1", PaymentStatus::Pending, 1000);
     process_payment_event(&pool, &p1).await.unwrap();
 
@@ -73,7 +73,7 @@ async fn transition_pending_to_failed() {
 
 #[tokio::test]
 async fn transition_pending_to_refunded() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_trans_r", "evt_tr1", PaymentStatus::Pending, 1000);
     process_payment_event(&pool, &p1).await.unwrap();
 
@@ -89,7 +89,7 @@ async fn transition_pending_to_refunded() {
 
 #[tokio::test]
 async fn status_change_writes_audit() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_sca", "evt_sca1", PaymentStatus::Pending, 1000);
     process_payment_event(&pool, &p1).await.unwrap();
 
@@ -107,7 +107,7 @@ async fn status_change_writes_audit() {
 
 #[tokio::test]
 async fn duplicate_event_returns_duplicate() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_dup", "evt_dup1", PaymentStatus::Pending, 1000);
     process_payment_event(&pool, &p1).await.unwrap();
 
@@ -121,7 +121,7 @@ async fn duplicate_event_returns_duplicate() {
 
 #[tokio::test]
 async fn same_status_returns_stale() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_same", "evt_same1", PaymentStatus::Pending, 1000);
     process_payment_event(&pool, &p1).await.unwrap();
 
@@ -138,7 +138,7 @@ async fn same_status_returns_stale() {
 
 #[tokio::test]
 async fn older_timestamp_returns_stale() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_old", "evt_old1", PaymentStatus::Pending, 2000);
     process_payment_event(&pool, &p1).await.unwrap();
 
@@ -155,7 +155,7 @@ async fn older_timestamp_returns_stale() {
 
 #[tokio::test]
 async fn stale_event_writes_audit() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_stale_a", "evt_sa1", PaymentStatus::Pending, 2000);
     process_payment_event(&pool, &p1).await.unwrap();
 
@@ -172,7 +172,7 @@ async fn stale_event_writes_audit() {
 
 #[tokio::test]
 async fn invalid_transition_succeeded_to_pending() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_inv1", "evt_inv1a", PaymentStatus::Pending, 1000);
     process_payment_event(&pool, &p1).await.unwrap();
     let p2 = make_payment("pi_inv1", "evt_inv1b", PaymentStatus::Succeeded, 2000);
@@ -187,7 +187,7 @@ async fn invalid_transition_succeeded_to_pending() {
 
 #[tokio::test]
 async fn invalid_transition_failed_to_succeeded() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_inv2", "evt_inv2a", PaymentStatus::Pending, 1000);
     process_payment_event(&pool, &p1).await.unwrap();
     let p2 = make_payment("pi_inv2", "evt_inv2b", PaymentStatus::Failed, 2000);
@@ -202,7 +202,7 @@ async fn invalid_transition_failed_to_succeeded() {
 
 #[tokio::test]
 async fn anomaly_writes_audit() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_anom", "evt_anom1", PaymentStatus::Pending, 1000);
     process_payment_event(&pool, &p1).await.unwrap();
     let p2 = make_payment("pi_anom", "evt_anom2", PaymentStatus::Succeeded, 2000);
@@ -222,7 +222,7 @@ async fn anomaly_writes_audit() {
 
 #[tokio::test]
 async fn anomaly_updates_tracking_fields() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_track", "evt_track1", PaymentStatus::Pending, 1000);
     process_payment_event(&pool, &p1).await.unwrap();
     let p2 = make_payment("pi_track", "evt_track2", PaymentStatus::Succeeded, 2000);
@@ -244,7 +244,7 @@ async fn anomaly_updates_tracking_fields() {
 
 #[tokio::test]
 async fn equal_timestamp_falls_through_to_state_machine() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_eq_ts", "evt_eq1", PaymentStatus::Pending, 1000);
     process_payment_event(&pool, &p1).await.unwrap();
 
@@ -261,7 +261,7 @@ async fn equal_timestamp_falls_through_to_state_machine() {
 
 #[tokio::test]
 async fn full_lifecycle_pending_succeeded() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
 
     let p1 = make_payment("pi_lc_s", "evt_lcs1", PaymentStatus::Pending, 1000);
     let r1 = process_payment_event(&pool, &p1).await.unwrap();
@@ -286,7 +286,7 @@ async fn full_lifecycle_pending_succeeded() {
 
 #[tokio::test]
 async fn full_lifecycle_pending_failed() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
 
     let p1 = make_payment("pi_lc_f", "evt_lcf1", PaymentStatus::Pending, 1000);
     let r1 = process_payment_event(&pool, &p1).await.unwrap();
@@ -311,7 +311,7 @@ async fn full_lifecycle_pending_failed() {
 
 #[tokio::test]
 async fn refund_stores_parent_external_id() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let r = make_refund("re_parent", "evt_rp1", PaymentStatus::Pending, 1000, "pi_parent_123");
     process_payment_event(&pool, &r).await.unwrap();
 
@@ -324,7 +324,7 @@ async fn refund_stores_parent_external_id() {
 
 #[tokio::test]
 async fn check_constraint_rejects_invalid_status() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let result = sqlx::query(
         r#"
         INSERT INTO payments
@@ -346,7 +346,7 @@ async fn check_constraint_rejects_invalid_status() {
 
 #[tokio::test]
 async fn check_constraint_rejects_negative_amount() {
-    let pool = setup_pool("frg_test_payment").await;
+    let pool = setup_pool("fin_sync_test_payment").await;
     let result = sqlx::query(
         r#"
         INSERT INTO payments
