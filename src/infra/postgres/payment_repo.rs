@@ -33,19 +33,19 @@ pub async fn log_passthrough_event(
     let mut tx = pool.begin().await?;
 
     // Dedup: record event, bail if already seen.
-    let inserted = sqlx::query_scalar::<_, bool>(
+    let inserted = sqlx::query_scalar!(
         r#"
         INSERT INTO provider_events (event_id, object_id, event_type, provider_ts, payload)
         VALUES ($1, COALESCE($2, ''), $3, $4, $5)
         ON CONFLICT (event_id) DO NOTHING
-        RETURNING true
+        RETURNING true AS "inserted!"
         "#,
+        event_id,
+        external_id,
+        event_type,
+        provider_ts,
+        raw_payload,
     )
-    .bind(event_id)
-    .bind(external_id)
-    .bind(event_type)
-    .bind(provider_ts)
-    .bind(raw_payload)
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -56,12 +56,10 @@ pub async fn log_passthrough_event(
 
     let entity_id = match external_id {
         Some(eid) => {
-            let row: Option<(Uuid,)> =
-                sqlx::query_as("SELECT id FROM payments WHERE external_id = $1")
-                    .bind(eid)
-                    .fetch_optional(&mut *tx)
-                    .await?;
-            row.map(|(id,)| id)
+            let row = sqlx::query!("SELECT id FROM payments WHERE external_id = $1", eid)
+                .fetch_optional(&mut *tx)
+                .await?;
+            row.map(|r| r.id)
         }
         None => None,
     };
@@ -93,32 +91,34 @@ pub async fn process_payment_event(
 ) -> Result<ProcessResult, PipelineError> {
     let mut tx = pool.begin().await?;
 
-    sqlx::query("SET LOCAL lock_timeout = '5s'")
+    sqlx::query!("SET LOCAL lock_timeout = '5s'")
         .execute(&mut *tx)
         .await?;
 
     // 1. Serialize all processing for this external_id.
     //    Advisory lock works even when the row doesn't exist yet —
     //    no gap lock issue, no insert race, no retry needed.
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
-        .bind(payment.external_id())
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query!(
+        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        payment.external_id()
+    )
+    .execute(&mut *tx)
+    .await?;
 
     // 2. Dedup: record the Stripe event. If already seen, bail early.
-    let inserted = sqlx::query_scalar::<_, bool>(
+    let inserted = sqlx::query_scalar!(
         r#"
         INSERT INTO provider_events (event_id, object_id, event_type, provider_ts, payload)
         VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (event_id) DO NOTHING
-        RETURNING true
+        RETURNING true AS "inserted!"
         "#,
+        payment.last_event_id(),
+        payment.external_id(),
+        payment.event_type(),
+        payment.provider_ts(),
+        payment.raw_event(),
     )
-    .bind(payment.last_event_id())
-    .bind(payment.external_id())
-    .bind(payment.event_type())
-    .bind(payment.provider_ts())
-    .bind(payment.raw_event())
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -135,15 +135,16 @@ pub async fn process_payment_event(
         .map_err(|_| PipelineError::Validation("amount exceeds storage capacity".into()))?;
 
     // 3. Get current state (no FOR UPDATE needed — advisory lock covers us).
-    let existing: Option<(Uuid, String, i64)> =
-        sqlx::query_as("SELECT id, status, last_provider_ts FROM payments WHERE external_id = $1")
-            .bind(payment.external_id())
-            .fetch_optional(&mut *tx)
-            .await?;
+    let existing = sqlx::query!(
+        "SELECT id, status, last_provider_ts FROM payments WHERE external_id = $1",
+        payment.external_id(),
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
 
     match existing {
         None => {
-            sqlx::query(
+            sqlx::query!(
                 r#"
                 INSERT INTO payments
                     (id, external_id, source, event_type, direction,
@@ -151,20 +152,20 @@ pub async fn process_payment_event(
                      last_event_id, parent_external_id, last_provider_ts)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 "#,
+                payment.id(),
+                payment.external_id(),
+                payment.source(),
+                payment.event_type(),
+                payment.direction().as_str(),
+                pg_amount,
+                payment.money().currency().as_str(),
+                payment.status().as_str(),
+                payment.metadata(),
+                payment.raw_event(),
+                payment.last_event_id(),
+                payment.parent_external_id(),
+                payment.provider_ts(),
             )
-            .bind(payment.id())
-            .bind(payment.external_id())
-            .bind(payment.source())
-            .bind(payment.event_type())
-            .bind(payment.direction().as_str())
-            .bind(pg_amount)
-            .bind(payment.money().currency().as_str())
-            .bind(payment.status().as_str())
-            .bind(payment.metadata())
-            .bind(payment.raw_event())
-            .bind(payment.last_event_id())
-            .bind(payment.parent_external_id())
-            .bind(payment.provider_ts())
             .execute(&mut *tx)
             .await?;
 
@@ -173,17 +174,20 @@ pub async fn process_payment_event(
             tx.commit().await?;
             Ok(ProcessResult::Created(payment.id()))
         }
-        Some((id, old_status_str, last_provider_ts)) => {
+        Some(row) => {
+            let id = row.id;
+            let old_status_str = row.status;
+            let last_provider_ts = row.last_provider_ts;
             let old_status = PaymentStatus::try_from(old_status_str.as_str())?;
 
             // Same status — nothing to change, just track that we saw this event.
             if *payment.status() == old_status {
-                sqlx::query(
+                sqlx::query!(
                     "UPDATE payments SET last_event_id = $1, last_provider_ts = GREATEST(last_provider_ts, $2), updated_at = now() WHERE id = $3",
+                    payment.last_event_id(),
+                    payment.provider_ts(),
+                    id,
                 )
-                .bind(payment.last_event_id())
-                .bind(payment.provider_ts())
-                .bind(id)
                 .execute(&mut *tx)
                 .await?;
 
@@ -205,11 +209,11 @@ pub async fn process_payment_event(
                 audit.entity_id = Some(id);
                 insert_audit_entry(&mut tx, &audit).await?;
 
-                sqlx::query(
+                sqlx::query!(
                     "UPDATE payments SET last_event_id = $1, updated_at = now() WHERE id = $2",
+                    payment.last_event_id(),
+                    id,
                 )
-                .bind(payment.last_event_id())
-                .bind(id)
                 .execute(&mut *tx)
                 .await?;
 
@@ -229,12 +233,12 @@ pub async fn process_payment_event(
                 insert_audit_entry(&mut tx, &audit).await?;
 
                 // Still update last_event_id and timestamp so we don't reprocess.
-                sqlx::query(
+                sqlx::query!(
                     "UPDATE payments SET last_event_id = $1, last_provider_ts = $2, updated_at = now() WHERE id = $3",
+                    payment.last_event_id(),
+                    payment.provider_ts(),
+                    id,
                 )
-                .bind(payment.last_event_id())
-                .bind(payment.provider_ts())
-                .bind(id)
                 .execute(&mut *tx)
                 .await?;
 
@@ -248,20 +252,20 @@ pub async fn process_payment_event(
                 );
                 Ok(ProcessResult::Anomaly(id))
             } else {
-                sqlx::query(
+                sqlx::query!(
                     r#"
                     UPDATE payments
                     SET status = $1, event_type = $2, metadata = $3,
                         last_event_id = $4, last_provider_ts = $5, updated_at = now()
                     WHERE id = $6
                     "#,
+                    payment.status().as_str(),
+                    payment.event_type(),
+                    payment.metadata(),
+                    payment.last_event_id(),
+                    payment.provider_ts(),
+                    id,
                 )
-                .bind(payment.status().as_str())
-                .bind(payment.event_type())
-                .bind(payment.metadata())
-                .bind(payment.last_event_id())
-                .bind(payment.provider_ts())
-                .bind(id)
                 .execute(&mut *tx)
                 .await?;
 
