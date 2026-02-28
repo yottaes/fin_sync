@@ -26,6 +26,16 @@ impl PaymentStatus {
             Self::Refunded => "refunded",
         }
     }
+
+    /// Lifecycle rank — higher means further along. Used to prevent
+    /// out-of-order events from regressing status.
+    pub fn rank(&self) -> u8 {
+        match self {
+            Self::Pending => 0,
+            Self::Succeeded | Self::Failed => 1,
+            Self::Refunded => 2,
+        }
+    }
 }
 
 impl fmt::Display for PaymentStatus {
@@ -140,6 +150,8 @@ pub struct NewPayment {
     status: PaymentStatus,
     metadata: serde_json::Value,
     raw_event: serde_json::Value,
+    last_event_id: String,
+    parent_external_id: Option<String>,
 }
 
 impl NewPayment {
@@ -154,6 +166,8 @@ impl NewPayment {
         status: PaymentStatus,
         metadata: serde_json::Value,
         raw_event: serde_json::Value,
+        last_event_id: String,
+        parent_external_id: Option<String>,
     ) -> Self {
         Self {
             id,
@@ -165,6 +179,8 @@ impl NewPayment {
             status,
             metadata,
             raw_event,
+            last_event_id,
+            parent_external_id,
         }
     }
 
@@ -204,15 +220,24 @@ impl NewPayment {
         &self.raw_event
     }
 
-    pub fn audit_entry(&self, actor: &str) -> NewAuditEntry {
+    pub fn last_event_id(&self) -> &str {
+        &self.last_event_id
+    }
+
+    pub fn parent_external_id(&self) -> Option<&str> {
+        self.parent_external_id.as_deref()
+    }
+
+    pub fn audit_entry(&self, actor: &str, action: &str) -> NewAuditEntry {
         NewAuditEntry {
             id: Uuid::now_v7(),
             entity_type: "payment".to_string(),
-            entity_id: self.id,
-            action: "created".to_string(),
+            entity_id: Some(self.id),
+            external_id: Some(self.external_id.clone()),
+            event_id: self.last_event_id.clone(),
+            action: action.to_string(),
             actor: actor.to_string(),
             detail: serde_json::json!({
-                "external_id": self.external_id,
                 "event_type": self.event_type,
                 "amount": self.money.amount().cents(),
                 "currency": self.money.currency().as_str(),

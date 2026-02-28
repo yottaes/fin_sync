@@ -1,167 +1,203 @@
 use {
-    crate::domain::error::PipelineError,
-    crate::domain::money::{Currency, Money, MoneyAmount},
-    crate::domain::payment::{NewPayment, PaymentDirection, PaymentStatus},
-    crate::infra::postgres::payment_repo::{InsertResult, insert_payment},
-    axum::{Json, extract::State},
-    derive_more::Display,
-    serde::{Deserialize, Serialize},
-    sqlx::PgPool,
+    crate::{
+        AppState,
+        adapters::api_errors::ApiError,
+        domain::{
+            error::PipelineError,
+            money::{Currency, Money, MoneyAmount},
+            payment::{NewPayment, PaymentDirection, PaymentStatus},
+        },
+        infra::postgres::payment_repo::{UpsertResult, log_passthrough_event, upsert_payment},
+    },
+    axum::{Json, extract::State, http::HeaderMap},
     uuid::Uuid,
 };
 
-#[derive(Debug, Deserialize, Serialize, Display)]
-#[display(
-    "id: {id}\nevent_type: {event_type}\ncreated: {created}\nlivemode: {livemode}\ndata: {data}"
-)]
-pub struct StripeEvent {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub event_type: StripeEventType,
-    pub created: i64,
-    pub livemode: bool,
-    pub data: StripeEventData,
+fn convert_currency(c: stripe::Currency) -> Result<Currency, PipelineError> {
+    match c {
+        stripe::Currency::USD => Ok(Currency::Usd),
+        stripe::Currency::EUR => Ok(Currency::Eur),
+        stripe::Currency::GBP => Ok(Currency::Gbp),
+        stripe::Currency::JPY => Ok(Currency::Jpy),
+        other => Err(PipelineError::Validation(format!(
+            "unsupported currency: {other:?}"
+        ))),
+    }
 }
 
-#[derive(Debug, Deserialize, Serialize, Display)]
-pub struct StripeEventData {
-    pub object: serde_json::Value,
+fn convert_amount(amount: i64) -> Result<MoneyAmount, PipelineError> {
+    let amount: u64 = amount
+        .try_into()
+        .map_err(|_| PipelineError::Validation("negative amount".into()))?;
+    Ok(MoneyAmount::new(amount))
 }
 
-#[derive(Debug, Deserialize, Serialize, Display)]
-pub enum StripeEventType {
-    #[serde(rename = "payment_intent.created")]
-    PaymentIntentCreated,
-
-    #[serde(rename = "payment_intent.succeeded")]
-    PaymentIntentSucceeded,
-
-    #[serde(rename = "charge.succeeded")]
-    ChargeSucceeded,
-
-    #[serde(rename = "charge.updated")]
-    ChargeUpdated,
-
-    #[serde(rename = "refund.created")]
-    RefundCreated,
-
-    #[serde(rename = "refund.updated")]
-    RefundUpdated,
-
-    #[serde(other, rename = "unknown")]
-    Unknown,
-}
-
-impl StripeEventType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::PaymentIntentCreated => "payment_intent.created",
-            Self::PaymentIntentSucceeded => "payment_intent.succeeded",
-            Self::ChargeSucceeded => "charge.succeeded",
-            Self::ChargeUpdated => "charge.updated",
-            Self::RefundCreated => "refund.created",
-            Self::RefundUpdated => "refund.updated",
-            Self::Unknown => "unknown",
+fn convert_pi_status(status: stripe::PaymentIntentStatus) -> PaymentStatus {
+    #[allow(unreachable_patterns)]
+    match status {
+        stripe::PaymentIntentStatus::Succeeded => PaymentStatus::Succeeded,
+        stripe::PaymentIntentStatus::Canceled => PaymentStatus::Failed,
+        stripe::PaymentIntentStatus::Processing
+        | stripe::PaymentIntentStatus::RequiresAction
+        | stripe::PaymentIntentStatus::RequiresCapture
+        | stripe::PaymentIntentStatus::RequiresConfirmation
+        | stripe::PaymentIntentStatus::RequiresPaymentMethod => PaymentStatus::Pending,
+        other => {
+            tracing::warn!("unknown PaymentIntentStatus: {other:?}, defaulting to Pending");
+            PaymentStatus::Pending
         }
     }
 }
 
-impl TryFrom<&StripeEvent> for NewPayment {
-    type Error = PipelineError;
-
-    fn try_from(event: &StripeEvent) -> Result<Self, Self::Error> {
-        let direction = match event.event_type {
-            StripeEventType::PaymentIntentSucceeded
-            | StripeEventType::PaymentIntentCreated
-            | StripeEventType::ChargeSucceeded
-            | StripeEventType::ChargeUpdated => PaymentDirection::Inbound,
-
-            StripeEventType::RefundCreated | StripeEventType::RefundUpdated => {
-                PaymentDirection::Outbound
-            }
-
-            _ => {
-                return Err(PipelineError::Validation(format!(
-                    "ignored event type: {:?}",
-                    event.event_type
-                )));
-            }
-        };
-
-        let obj = &event.data.object;
-
-        let amount = obj
-            .get("amount")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| PipelineError::Validation("missing or invalid 'amount'".to_string()))?;
-
-        let currency_str = obj
-            .get("currency")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                PipelineError::Validation("missing or invalid 'currency'".to_string())
-            })?;
-
-        let currency = Currency::try_from(currency_str).map_err(PipelineError::Validation)?;
-
-        let money = Money::new(MoneyAmount::new(amount), currency);
-
-        let status_str = obj
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("pending");
-
-        let canonical_status = match status_str {
-            "requires_payment_method"
-            | "requires_confirmation"
-            | "requires_action"
-            | "processing"
-            | "requires_capture" => "pending",
-            "succeeded" if direction == PaymentDirection::Outbound => "refunded",
-            other => other,
-        };
-
-        let status = PaymentStatus::try_from(canonical_status)?;
-
-        let metadata = obj
-            .get("metadata")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-
-        let raw_event = serde_json::to_value(event)?;
-
-        NewPayment::new(
-            Uuid::now_v7(),
-            event.id.clone(),
-            "stripe".to_string(),
-            event.event_type.as_str().to_string(),
-            direction,
-            money,
-            status,
-            metadata,
-            raw_event,
-        )
+fn convert_refund_status(status: Option<&str>) -> PaymentStatus {
+    match status {
+        Some("succeeded") => PaymentStatus::Refunded,
+        Some("failed") | Some("canceled") => PaymentStatus::Failed,
+        _ => PaymentStatus::Pending,
     }
+}
+
+fn payment_from_pi(
+    pi: &stripe::PaymentIntent,
+    event_id: &str,
+    event_type: &str,
+    raw_event: serde_json::Value,
+) -> Result<NewPayment, PipelineError> {
+    let currency = convert_currency(pi.currency)?;
+    let amount = convert_amount(pi.amount)?;
+    let status = convert_pi_status(pi.status);
+    let metadata = serde_json::to_value(&pi.metadata)?;
+
+    Ok(NewPayment::new(
+        Uuid::now_v7(),
+        pi.id.to_string(),
+        "stripe".to_string(),
+        event_type.to_string(),
+        PaymentDirection::Inbound,
+        Money::new(amount, currency),
+        status,
+        metadata,
+        raw_event,
+        event_id.to_string(),
+        None,
+    ))
+}
+
+fn payment_from_refund(
+    refund: &stripe::Refund,
+    event_id: &str,
+    event_type: &str,
+    raw_event: serde_json::Value,
+) -> Result<NewPayment, PipelineError> {
+    let currency = convert_currency(refund.currency)?;
+    let amount = convert_amount(refund.amount)?;
+    let status = convert_refund_status(refund.status.as_deref());
+    let metadata = refund
+        .metadata
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()?
+        .unwrap_or(serde_json::Value::Null);
+
+    let parent_pi_id = refund.payment_intent.as_ref().map(|e| match e {
+        stripe::Expandable::Id(id) => id.to_string(),
+        stripe::Expandable::Object(pi) => pi.id.to_string(),
+    });
+
+    Ok(NewPayment::new(
+        Uuid::now_v7(),
+        refund.id.to_string(),
+        "stripe".to_string(),
+        event_type.to_string(),
+        PaymentDirection::Outbound,
+        Money::new(amount, currency),
+        status,
+        metadata,
+        raw_event,
+        event_id.to_string(),
+        parent_pi_id,
+    ))
 }
 
 pub async fn stripe_webhook_handler(
-    State(pool): State<PgPool>,
-    Json(event): Json<StripeEvent>,
-) -> Result<Json<serde_json::Value>, PipelineError> {
-    let payment = NewPayment::try_from(&event)
-        .inspect_err(|e| tracing::warn!("failed to convert stripe event: {e}"))?;
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: String,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let sig = headers
+        .get("Stripe-Signature")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            PipelineError::WebhookSignature("missing Stripe-Signature header".into())
+        })?;
 
-    let audit = payment.audit_entry("webhook:stripe");
+    let event = stripe::Webhook::construct_event(&body, sig, &state.stripe_webhook_secret)
+        .map_err(|e| PipelineError::WebhookSignature(e.to_string()))?;
 
-    match insert_payment(&pool, &payment, &audit).await? {
-        InsertResult::Created(id) => {
+    let event_id = event.id.to_string();
+    let raw_event: serde_json::Value =
+        serde_json::from_str(&body).map_err(PipelineError::from)?;
+    let event_type = raw_event
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let payment = match event.data.object {
+        stripe::EventObject::PaymentIntent(ref pi) => {
+            match payment_from_pi(pi, &event_id, &event_type, raw_event) {
+                Ok(p) => p,
+                Err(PipelineError::Validation(msg)) => {
+                    tracing::warn!(event_type = %event_type, "skipping invalid PI data: {msg}");
+                    return Ok(Json(serde_json::json!({"status": "ignored_invalid_data"})));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        stripe::EventObject::Refund(ref refund) => {
+            match payment_from_refund(refund, &event_id, &event_type, raw_event) {
+                Ok(p) => p,
+                Err(PipelineError::Validation(msg)) => {
+                    tracing::warn!(event_type = %event_type, "skipping invalid refund data: {msg}");
+                    return Ok(Json(serde_json::json!({"status": "ignored_invalid_data"})));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        stripe::EventObject::Charge(ref charge) => {
+            let pi_id = charge.payment_intent.as_ref().map(|e| match e {
+                stripe::Expandable::Id(id) => id.to_string(),
+                stripe::Expandable::Object(pi) => pi.id.to_string(),
+            });
+            log_passthrough_event(
+                &state.pool,
+                pi_id.as_deref(),
+                &event_id,
+                &event_type,
+            )
+            .await?;
+            tracing::info!(event_type = %event_type, "charge event logged");
+            return Ok(Json(serde_json::json!({"status": "logged"})));
+        }
+        _ => {
+            log_passthrough_event(&state.pool, None, &event_id, &event_type).await?;
+            tracing::info!(event_type = %event_type, "unsupported event logged");
+            return Ok(Json(serde_json::json!({"status": "logged"})));
+        }
+    };
+
+    match upsert_payment(&state.pool, &payment).await? {
+        UpsertResult::Created(id) => {
             tracing::info!(payment_id = %id, direction = ?payment.direction(), "payment created");
             Ok(Json(serde_json::json!({"status": "created"})))
         }
-
-        InsertResult::Duplicate => {
-            tracing::info!(external_id = %event.id, "duplicate event");
-            Ok(Json(serde_json::json!({"status": "duplicate"})))
+        UpsertResult::Updated(id) => {
+            tracing::info!(payment_id = %id, direction = ?payment.direction(), "payment updated");
+            Ok(Json(serde_json::json!({"status": "updated"})))
+        }
+        UpsertResult::Skipped(id) => {
+            tracing::info!(payment_id = %id, event_type = %event_type, "out-of-order event, status not changed");
+            Ok(Json(serde_json::json!({"status": "skipped"})))
         }
     }
 }
