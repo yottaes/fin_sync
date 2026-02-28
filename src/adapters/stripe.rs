@@ -5,12 +5,11 @@ use {
         domain::{
             error::PipelineError,
             money::{Currency, Money, MoneyAmount},
-            payment::{NewPayment, PaymentDirection, PaymentStatus},
+            payment::{NewPayment, NewPaymentParams, PaymentDirection, PaymentStatus},
         },
         infra::postgres::payment_repo::{ProcessResult, log_passthrough_event, process_payment_event},
     },
     axum::{Json, extract::State, http::HeaderMap},
-    uuid::Uuid,
 };
 
 fn convert_currency(c: stripe::Currency) -> Result<Currency, PipelineError> {
@@ -69,20 +68,19 @@ fn payment_from_pi(
     let status = convert_pi_status(pi.status);
     let metadata = serde_json::to_value(&pi.metadata)?;
 
-    Ok(NewPayment::new(
-        Uuid::now_v7(),
-        pi.id.to_string(),
-        "stripe".to_string(),
-        event_type.to_string(),
-        PaymentDirection::Inbound,
-        Money::new(amount, currency),
+    Ok(NewPayment::new(NewPaymentParams {
+        external_id: pi.id.to_string(),
+        source: "stripe".into(),
+        event_type: event_type.into(),
+        direction: PaymentDirection::Inbound,
+        money: Money::new(amount, currency),
         status,
         metadata,
         raw_event,
-        event_id.to_string(),
-        None,
+        last_event_id: event_id.into(),
+        parent_external_id: None,
         stripe_created,
-    ))
+    }))
 }
 
 fn payment_from_refund(
@@ -107,20 +105,19 @@ fn payment_from_refund(
         stripe::Expandable::Object(pi) => pi.id.to_string(),
     });
 
-    Ok(NewPayment::new(
-        Uuid::now_v7(),
-        refund.id.to_string(),
-        "stripe".to_string(),
-        event_type.to_string(),
-        PaymentDirection::Outbound,
-        Money::new(amount, currency),
+    Ok(NewPayment::new(NewPaymentParams {
+        external_id: refund.id.to_string(),
+        source: "stripe".into(),
+        event_type: event_type.into(),
+        direction: PaymentDirection::Outbound,
+        money: Money::new(amount, currency),
         status,
         metadata,
         raw_event,
-        event_id.to_string(),
-        parent_pi_id,
+        last_event_id: event_id.into(),
+        parent_external_id: parent_pi_id,
         stripe_created,
-    ))
+    }))
 }
 
 #[tracing::instrument(

@@ -89,7 +89,22 @@ impl TryFrom<&str> for PaymentDirection {
     }
 }
 
-/// For INSERT — id generated in Rust via Uuid::now_v7().
+/// Named params for constructing a NewPayment. All fields explicit at the call site.
+pub struct NewPaymentParams {
+    pub external_id: String,
+    pub source: String,
+    pub event_type: String,
+    pub direction: PaymentDirection,
+    pub money: Money,
+    pub status: PaymentStatus,
+    pub metadata: serde_json::Value,
+    pub raw_event: serde_json::Value,
+    pub last_event_id: String,
+    pub parent_external_id: Option<String>,
+    pub stripe_created: i64,
+}
+
+/// For INSERT — id auto-generated via Uuid::now_v7().
 #[derive(Debug, Clone)]
 pub struct NewPayment {
     id: Uuid,
@@ -107,34 +122,20 @@ pub struct NewPayment {
 }
 
 impl NewPayment {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        id: Uuid,
-        external_id: String,
-        source: String,
-        event_type: String,
-        direction: PaymentDirection,
-        money: Money,
-        status: PaymentStatus,
-        metadata: serde_json::Value,
-        raw_event: serde_json::Value,
-        last_event_id: String,
-        parent_external_id: Option<String>,
-        stripe_created: i64,
-    ) -> Self {
+    pub fn new(p: NewPaymentParams) -> Self {
         Self {
-            id,
-            external_id,
-            source,
-            event_type,
-            direction,
-            money,
-            status,
-            metadata,
-            raw_event,
-            last_event_id,
-            parent_external_id,
-            stripe_created,
+            id: Uuid::now_v7(),
+            external_id: p.external_id,
+            source: p.source,
+            event_type: p.event_type,
+            direction: p.direction,
+            money: p.money,
+            status: p.status,
+            metadata: p.metadata,
+            raw_event: p.raw_event,
+            last_event_id: p.last_event_id,
+            parent_external_id: p.parent_external_id,
+            stripe_created: p.stripe_created,
         }
     }
 
@@ -275,20 +276,19 @@ mod tests {
 
     #[test]
     fn new_payment_audit_entry() {
-        let p = NewPayment::new(
-            Uuid::now_v7(),
-            "pi_123".into(),
-            "stripe".into(),
-            "payment_intent.succeeded".into(),
-            PaymentDirection::Inbound,
-            Money::new(MoneyAmount::new(5000), Currency::Eur),
-            PaymentStatus::Succeeded,
-            serde_json::json!({}),
-            serde_json::json!({"id": "evt_1"}),
-            "evt_1".into(),
-            None,
-            1709136000,
-        );
+        let p = NewPayment::new(NewPaymentParams {
+            external_id: "pi_123".into(),
+            source: "stripe".into(),
+            event_type: "payment_intent.succeeded".into(),
+            direction: PaymentDirection::Inbound,
+            money: Money::new(MoneyAmount::new(5000), Currency::Eur),
+            status: PaymentStatus::Succeeded,
+            metadata: serde_json::json!({}),
+            raw_event: serde_json::json!({"id": "evt_1"}),
+            last_event_id: "evt_1".into(),
+            parent_external_id: None,
+            stripe_created: 1709136000,
+        });
 
         let audit = p.audit_entry("webhook:stripe", "created");
         assert_eq!(audit.action, "created");
