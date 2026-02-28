@@ -2,7 +2,6 @@ use {
     super::audit::NewAuditEntry,
     super::error::PipelineError,
     super::money::Money,
-    chrono::{DateTime, Utc},
     serde::{Deserialize, Serialize},
     std::fmt,
     uuid::Uuid,
@@ -27,14 +26,15 @@ impl PaymentStatus {
         }
     }
 
-    /// Lifecycle rank — higher means further along. Used to prevent
-    /// out-of-order events from regressing status.
-    pub fn rank(&self) -> u8 {
-        match self {
-            Self::Pending => 0,
-            Self::Succeeded | Self::Failed => 1,
-            Self::Refunded => 2,
-        }
+    /// Exhaustive transition table. Every allowed edge is listed explicitly.
+    /// If it's not here, it's not allowed.
+    pub fn can_transition_to(&self, new: &Self) -> bool {
+        matches!(
+            (self, new),
+            (Self::Pending, Self::Succeeded)
+                | (Self::Pending, Self::Failed)
+                | (Self::Succeeded, Self::Refunded)
+        )
     }
 }
 
@@ -89,55 +89,6 @@ impl TryFrom<&str> for PaymentDirection {
     }
 }
 
-/// Full payment record from DB (for reads).
-#[derive(Debug, Clone, Serialize)]
-pub struct Payment {
-    id: Uuid,
-    external_id: String,
-    source: String,
-    event_type: String,
-    direction: PaymentDirection,
-    money: Money,
-    status: PaymentStatus,
-    metadata: serde_json::Value,
-    raw_event: serde_json::Value,
-    received_at: DateTime<Utc>,
-    created_at: DateTime<Utc>,
-}
-
-impl Payment {
-    pub fn id(&self) -> Uuid {
-        self.id
-    }
-
-    pub fn status(&self) -> &PaymentStatus {
-        &self.status
-    }
-
-    pub fn money(&self) -> &Money {
-        &self.money
-    }
-
-    pub fn transition_status(&mut self, new: PaymentStatus) -> Result<(), PipelineError> {
-        let valid = matches!(
-            (&self.status, &new),
-            (PaymentStatus::Pending, PaymentStatus::Succeeded)
-                | (PaymentStatus::Pending, PaymentStatus::Failed)
-                | (PaymentStatus::Succeeded, PaymentStatus::Refunded)
-        );
-
-        if !valid {
-            return Err(PipelineError::Validation(format!(
-                "invalid status transition: {} → {}",
-                self.status, new
-            )));
-        }
-
-        self.status = new;
-        Ok(())
-    }
-}
-
 /// For INSERT — id generated in Rust via Uuid::now_v7().
 #[derive(Debug, Clone)]
 pub struct NewPayment {
@@ -152,6 +103,7 @@ pub struct NewPayment {
     raw_event: serde_json::Value,
     last_event_id: String,
     parent_external_id: Option<String>,
+    stripe_created: i64,
 }
 
 impl NewPayment {
@@ -168,6 +120,7 @@ impl NewPayment {
         raw_event: serde_json::Value,
         last_event_id: String,
         parent_external_id: Option<String>,
+        stripe_created: i64,
     ) -> Self {
         Self {
             id,
@@ -181,6 +134,7 @@ impl NewPayment {
             raw_event,
             last_event_id,
             parent_external_id,
+            stripe_created,
         }
     }
 
@@ -228,6 +182,10 @@ impl NewPayment {
         self.parent_external_id.as_deref()
     }
 
+    pub fn stripe_created(&self) -> i64 {
+        self.stripe_created
+    }
+
     pub fn audit_entry(&self, actor: &str, action: &str) -> NewAuditEntry {
         NewAuditEntry {
             id: Uuid::now_v7(),
@@ -244,5 +202,101 @@ impl NewPayment {
                 "status": self.status.as_str(),
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::money::{Currency, Money, MoneyAmount};
+
+    #[test]
+    fn can_transition_valid_paths() {
+        use PaymentStatus::*;
+        assert!(Pending.can_transition_to(&Succeeded));
+        assert!(Pending.can_transition_to(&Failed));
+        assert!(Succeeded.can_transition_to(&Refunded));
+    }
+
+    #[test]
+    fn can_transition_invalid_paths() {
+        use PaymentStatus::*;
+        // same status
+        assert!(!Pending.can_transition_to(&Pending));
+        assert!(!Succeeded.can_transition_to(&Succeeded));
+        // backwards
+        assert!(!Succeeded.can_transition_to(&Pending));
+        assert!(!Failed.can_transition_to(&Pending));
+        // impossible edges
+        assert!(!Failed.can_transition_to(&Succeeded));
+        assert!(!Failed.can_transition_to(&Refunded));
+        assert!(!Pending.can_transition_to(&Refunded));
+        // terminal
+        assert!(!Refunded.can_transition_to(&Pending));
+        assert!(!Refunded.can_transition_to(&Succeeded));
+    }
+
+    #[test]
+    fn status_as_str_roundtrip() {
+        let statuses = [
+            PaymentStatus::Pending,
+            PaymentStatus::Succeeded,
+            PaymentStatus::Failed,
+            PaymentStatus::Refunded,
+        ];
+        for s in &statuses {
+            let parsed = PaymentStatus::try_from(s.as_str()).unwrap();
+            assert_eq!(&parsed, s);
+        }
+    }
+
+    #[test]
+    fn status_try_from_unknown_is_err() {
+        let result = PaymentStatus::try_from("cancelled");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn direction_as_str_roundtrip() {
+        assert_eq!(
+            PaymentDirection::try_from("inbound").unwrap(),
+            PaymentDirection::Inbound
+        );
+        assert_eq!(
+            PaymentDirection::try_from("outbound").unwrap(),
+            PaymentDirection::Outbound
+        );
+    }
+
+    #[test]
+    fn direction_try_from_unknown_is_err() {
+        assert!(PaymentDirection::try_from("lateral").is_err());
+    }
+
+    #[test]
+    fn new_payment_audit_entry() {
+        let p = NewPayment::new(
+            Uuid::now_v7(),
+            "pi_123".into(),
+            "stripe".into(),
+            "payment_intent.succeeded".into(),
+            PaymentDirection::Inbound,
+            Money::new(MoneyAmount::new(5000), Currency::Eur),
+            PaymentStatus::Succeeded,
+            serde_json::json!({}),
+            serde_json::json!({"id": "evt_1"}),
+            "evt_1".into(),
+            None,
+            1709136000,
+        );
+
+        let audit = p.audit_entry("webhook:stripe", "created");
+        assert_eq!(audit.action, "created");
+        assert_eq!(audit.actor, "webhook:stripe");
+        assert_eq!(audit.entity_id, Some(p.id()));
+        assert_eq!(audit.external_id.as_deref(), Some("pi_123"));
+        assert_eq!(audit.event_id, "evt_1");
+        assert_eq!(audit.detail["currency"], "eur");
+        assert_eq!(audit.detail["amount"], 5000);
     }
 }

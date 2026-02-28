@@ -7,7 +7,7 @@ use {
             money::{Currency, Money, MoneyAmount},
             payment::{NewPayment, PaymentDirection, PaymentStatus},
         },
-        infra::postgres::payment_repo::{UpsertResult, log_passthrough_event, upsert_payment},
+        infra::postgres::payment_repo::{ProcessResult, log_passthrough_event, process_payment_event},
     },
     axum::{Json, extract::State, http::HeaderMap},
     uuid::Uuid,
@@ -62,6 +62,7 @@ fn payment_from_pi(
     event_id: &str,
     event_type: &str,
     raw_event: serde_json::Value,
+    stripe_created: i64,
 ) -> Result<NewPayment, PipelineError> {
     let currency = convert_currency(pi.currency)?;
     let amount = convert_amount(pi.amount)?;
@@ -80,6 +81,7 @@ fn payment_from_pi(
         raw_event,
         event_id.to_string(),
         None,
+        stripe_created,
     ))
 }
 
@@ -88,6 +90,7 @@ fn payment_from_refund(
     event_id: &str,
     event_type: &str,
     raw_event: serde_json::Value,
+    stripe_created: i64,
 ) -> Result<NewPayment, PipelineError> {
     let currency = convert_currency(refund.currency)?;
     let amount = convert_amount(refund.amount)?;
@@ -116,6 +119,7 @@ fn payment_from_refund(
         raw_event,
         event_id.to_string(),
         parent_pi_id,
+        stripe_created,
     ))
 }
 
@@ -135,6 +139,7 @@ pub async fn stripe_webhook_handler(
         .map_err(|e| PipelineError::WebhookSignature(e.to_string()))?;
 
     let event_id = event.id.to_string();
+    let stripe_created = event.created;
     let raw_event: serde_json::Value =
         serde_json::from_str(&body).map_err(PipelineError::from)?;
     let event_type = raw_event
@@ -145,7 +150,7 @@ pub async fn stripe_webhook_handler(
 
     let payment = match event.data.object {
         stripe::EventObject::PaymentIntent(ref pi) => {
-            match payment_from_pi(pi, &event_id, &event_type, raw_event) {
+            match payment_from_pi(pi, &event_id, &event_type, raw_event, stripe_created) {
                 Ok(p) => p,
                 Err(PipelineError::Validation(msg)) => {
                     tracing::warn!(event_type = %event_type, "skipping invalid PI data: {msg}");
@@ -155,7 +160,7 @@ pub async fn stripe_webhook_handler(
             }
         }
         stripe::EventObject::Refund(ref refund) => {
-            match payment_from_refund(refund, &event_id, &event_type, raw_event) {
+            match payment_from_refund(refund, &event_id, &event_type, raw_event, stripe_created) {
                 Ok(p) => p,
                 Err(PipelineError::Validation(msg)) => {
                     tracing::warn!(event_type = %event_type, "skipping invalid refund data: {msg}");
@@ -169,35 +174,55 @@ pub async fn stripe_webhook_handler(
                 stripe::Expandable::Id(id) => id.to_string(),
                 stripe::Expandable::Object(pi) => pi.id.to_string(),
             });
-            log_passthrough_event(
+            let is_new = log_passthrough_event(
                 &state.pool,
                 pi_id.as_deref(),
                 &event_id,
                 &event_type,
+                stripe_created,
+                &raw_event,
             )
             .await?;
-            tracing::info!(event_type = %event_type, "charge event logged");
-            return Ok(Json(serde_json::json!({"status": "logged"})));
+            let status = if is_new { "logged" } else { "duplicate" };
+            tracing::info!(event_type = %event_type, status, "charge event");
+            return Ok(Json(serde_json::json!({"status": status})));
         }
         _ => {
-            log_passthrough_event(&state.pool, None, &event_id, &event_type).await?;
-            tracing::info!(event_type = %event_type, "unsupported event logged");
-            return Ok(Json(serde_json::json!({"status": "logged"})));
+            let is_new = log_passthrough_event(
+                &state.pool,
+                None,
+                &event_id,
+                &event_type,
+                stripe_created,
+                &raw_event,
+            )
+            .await?;
+            let status = if is_new { "logged" } else { "duplicate" };
+            tracing::info!(event_type = %event_type, status, "unsupported event");
+            return Ok(Json(serde_json::json!({"status": status})));
         }
     };
 
-    match upsert_payment(&state.pool, &payment).await? {
-        UpsertResult::Created(id) => {
+    match process_payment_event(&state.pool, &payment).await? {
+        ProcessResult::Created(id) => {
             tracing::info!(payment_id = %id, direction = ?payment.direction(), "payment created");
             Ok(Json(serde_json::json!({"status": "created"})))
         }
-        UpsertResult::Updated(id) => {
+        ProcessResult::Updated(id) => {
             tracing::info!(payment_id = %id, direction = ?payment.direction(), "payment updated");
             Ok(Json(serde_json::json!({"status": "updated"})))
         }
-        UpsertResult::Skipped(id) => {
-            tracing::info!(payment_id = %id, event_type = %event_type, "out-of-order event, status not changed");
+        ProcessResult::Stale(id) => {
+            tracing::info!(payment_id = %id, event_type = %event_type, "stale event, skipped");
             Ok(Json(serde_json::json!({"status": "skipped"})))
+        }
+        ProcessResult::Duplicate => {
+            tracing::info!(event_id = %event_id, "duplicate event, already processed");
+            Ok(Json(serde_json::json!({"status": "duplicate"})))
+        }
+        ProcessResult::Anomaly(id) => {
+            tracing::warn!(payment_id = %id, event_type = %event_type, "anomalous transition, logged");
+            Ok(Json(serde_json::json!({"status": "anomaly"})))
         }
     }
 }
