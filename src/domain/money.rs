@@ -6,14 +6,15 @@ use {
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MoneyAmount(u64);
+pub struct MoneyAmount(i64);
 
 impl MoneyAmount {
-    pub fn new(cents: u64) -> Self {
+    pub fn new(cents: i64) -> Self {
+        assert!(cents >= 0, "MoneyAmount cannot be negative, got: {cents}");
         Self(cents)
     }
 
-    pub fn cents(&self) -> u64 {
+    pub fn cents(&self) -> i64 {
         self.0
     }
 

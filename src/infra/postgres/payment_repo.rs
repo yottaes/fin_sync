@@ -128,12 +128,7 @@ pub async fn process_payment_event(
         return Ok(ProcessResult::Duplicate);
     }
 
-    let pg_amount: i64 = payment
-        .money()
-        .amount()
-        .cents()
-        .try_into()
-        .map_err(|_| PipelineError::Validation("amount exceeds storage capacity".into()))?;
+    let pg_amount: i64 = payment.money().amount().cents();
 
     // 3. Get current state (no FOR UPDATE needed — advisory lock covers us).
     let existing = sqlx::query!(
