@@ -79,7 +79,7 @@ fn payment_from_pi(
         raw_event,
         last_event_id: event_id.into(),
         parent_external_id: None,
-        stripe_created,
+        provider_ts: stripe_created,
     }))
 }
 
@@ -116,7 +116,7 @@ fn payment_from_refund(
         raw_event,
         last_event_id: event_id.into(),
         parent_external_id: parent_pi_id,
-        stripe_created,
+        provider_ts: stripe_created,
     }))
 }
 

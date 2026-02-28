@@ -21,13 +21,13 @@ pub enum ProcessResult {
 }
 
 /// Log an audit entry for events we don't upsert (charges, unknown).
-/// Records the event in stripe_events for dedup, then writes an audit row.
+/// Records the event in provider_events for dedup, then writes an audit row.
 pub async fn log_passthrough_event(
     pool: &PgPool,
     external_id: Option<&str>,
     event_id: &str,
     event_type: &str,
-    stripe_created: i64,
+    provider_ts: i64,
     raw_payload: &serde_json::Value,
 ) -> Result<bool, PipelineError> {
     let mut tx = pool.begin().await?;
@@ -35,7 +35,7 @@ pub async fn log_passthrough_event(
     // Dedup: record event, bail if already seen.
     let inserted = sqlx::query_scalar::<_, bool>(
         r#"
-        INSERT INTO stripe_events (event_id, object_id, event_type, stripe_created, payload)
+        INSERT INTO provider_events (event_id, object_id, event_type, provider_ts, payload)
         VALUES ($1, COALESCE($2, ''), $3, $4, $5)
         ON CONFLICT (event_id) DO NOTHING
         RETURNING true
@@ -44,7 +44,7 @@ pub async fn log_passthrough_event(
     .bind(event_id)
     .bind(external_id)
     .bind(event_type)
-    .bind(stripe_created)
+    .bind(provider_ts)
     .bind(raw_payload)
     .fetch_optional(&mut *tx)
     .await?;
@@ -108,7 +108,7 @@ pub async fn process_payment_event(
     // 2. Dedup: record the Stripe event. If already seen, bail early.
     let inserted = sqlx::query_scalar::<_, bool>(
         r#"
-        INSERT INTO stripe_events (event_id, object_id, event_type, stripe_created, payload)
+        INSERT INTO provider_events (event_id, object_id, event_type, provider_ts, payload)
         VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (event_id) DO NOTHING
         RETURNING true
@@ -117,7 +117,7 @@ pub async fn process_payment_event(
     .bind(payment.last_event_id())
     .bind(payment.external_id())
     .bind(payment.event_type())
-    .bind(payment.stripe_created())
+    .bind(payment.provider_ts())
     .bind(payment.raw_event())
     .fetch_optional(&mut *tx)
     .await?;
@@ -136,7 +136,7 @@ pub async fn process_payment_event(
 
     // 3. Get current state (no FOR UPDATE needed — advisory lock covers us).
     let existing: Option<(Uuid, String, i64)> = sqlx::query_as(
-        "SELECT id, status, last_stripe_created FROM payments WHERE external_id = $1",
+        "SELECT id, status, last_provider_ts FROM payments WHERE external_id = $1",
     )
     .bind(payment.external_id())
     .fetch_optional(&mut *tx)
@@ -149,7 +149,7 @@ pub async fn process_payment_event(
                 INSERT INTO payments
                     (id, external_id, source, event_type, direction,
                      amount, currency, status, metadata, raw_event,
-                     last_event_id, parent_external_id, last_stripe_created)
+                     last_event_id, parent_external_id, last_provider_ts)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 "#,
             )
@@ -165,7 +165,7 @@ pub async fn process_payment_event(
             .bind(payment.raw_event())
             .bind(payment.last_event_id())
             .bind(payment.parent_external_id())
-            .bind(payment.stripe_created())
+            .bind(payment.provider_ts())
             .execute(&mut *tx)
             .await?;
 
@@ -174,13 +174,28 @@ pub async fn process_payment_event(
             tx.commit().await?;
             Ok(ProcessResult::Created(payment.id()))
         }
-        Some((id, old_status_str, last_stripe_created)) => {
+        Some((id, old_status_str, last_provider_ts)) => {
             let old_status = PaymentStatus::try_from(old_status_str.as_str())?;
+
+            // Same status — nothing to change, just track that we saw this event.
+            if *payment.status() == old_status {
+                sqlx::query(
+                    "UPDATE payments SET last_event_id = $1, last_provider_ts = GREATEST(last_provider_ts, $2), updated_at = now() WHERE id = $3",
+                )
+                .bind(payment.last_event_id())
+                .bind(payment.provider_ts())
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
+                return Ok(ProcessResult::Stale(id));
+            }
 
             // Temporal check: is this event newer than what we've already processed?
             // Use strict < because Stripe events within the same second share
             // a timestamp — equal timestamps fall through to the state machine.
-            if payment.stripe_created() < last_stripe_created {
+            if payment.provider_ts() < last_provider_ts {
                 let mut audit = payment.audit_entry("webhook:stripe", "event_received");
                 audit.detail = serde_json::json!({
                     "event_type": payment.event_type(),
@@ -216,10 +231,10 @@ pub async fn process_payment_event(
 
                 // Still update last_event_id and timestamp so we don't reprocess.
                 sqlx::query(
-                    "UPDATE payments SET last_event_id = $1, last_stripe_created = $2, updated_at = now() WHERE id = $3",
+                    "UPDATE payments SET last_event_id = $1, last_provider_ts = $2, updated_at = now() WHERE id = $3",
                 )
                 .bind(payment.last_event_id())
-                .bind(payment.stripe_created())
+                .bind(payment.provider_ts())
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
@@ -238,7 +253,7 @@ pub async fn process_payment_event(
                     r#"
                     UPDATE payments
                     SET status = $1, event_type = $2, metadata = $3,
-                        last_event_id = $4, last_stripe_created = $5, updated_at = now()
+                        last_event_id = $4, last_provider_ts = $5, updated_at = now()
                     WHERE id = $6
                     "#,
                 )
@@ -246,7 +261,7 @@ pub async fn process_payment_event(
                 .bind(payment.event_type())
                 .bind(payment.metadata())
                 .bind(payment.last_event_id())
-                .bind(payment.stripe_created())
+                .bind(payment.provider_ts())
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
