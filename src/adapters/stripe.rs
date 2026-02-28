@@ -28,9 +28,9 @@ fn convert_currency(c: stripe::Currency) -> Result<Currency, PipelineError> {
 }
 
 fn convert_amount(amount: i64) -> Result<MoneyAmount, PipelineError> {
-    let amount: u64 = amount
-        .try_into()
-        .map_err(|_| PipelineError::Validation("negative amount".into()))?;
+    if amount < 0 {
+        return Err(PipelineError::Validation("negative amount".into()));
+    }
     Ok(MoneyAmount::new(amount))
 }
 

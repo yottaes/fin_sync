@@ -47,14 +47,14 @@ proptest! {
 
     /// MoneyAmount survives roundtrip through cents().
     #[test]
-    fn money_amount_roundtrip(cents in 0u64..=i64::MAX as u64) {
+    fn money_amount_roundtrip(cents in 0i64..=i64::MAX) {
         let amount = MoneyAmount::new(cents);
         prop_assert_eq!(amount.cents(), cents);
     }
 
-    /// MoneyAmount::checked_add matches u64::checked_add — never silently overflows.
+    /// MoneyAmount::checked_add matches i64::checked_add — never silently overflows.
     #[test]
-    fn money_add_never_silently_overflows(a in 0u64..=u64::MAX, b in 0u64..=u64::MAX) {
+    fn money_add_never_silently_overflows(a in 0i64..=i64::MAX, b in 0i64..=i64::MAX) {
         let result = MoneyAmount::new(a).checked_add(MoneyAmount::new(b));
         match a.checked_add(b) {
             Some(expected) => prop_assert_eq!(result.unwrap().cents(), expected),
