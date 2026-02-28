@@ -135,12 +135,11 @@ pub async fn process_payment_event(
         .map_err(|_| PipelineError::Validation("amount exceeds storage capacity".into()))?;
 
     // 3. Get current state (no FOR UPDATE needed — advisory lock covers us).
-    let existing: Option<(Uuid, String, i64)> = sqlx::query_as(
-        "SELECT id, status, last_provider_ts FROM payments WHERE external_id = $1",
-    )
-    .bind(payment.external_id())
-    .fetch_optional(&mut *tx)
-    .await?;
+    let existing: Option<(Uuid, String, i64)> =
+        sqlx::query_as("SELECT id, status, last_provider_ts FROM payments WHERE external_id = $1")
+            .bind(payment.external_id())
+            .fetch_optional(&mut *tx)
+            .await?;
 
     match existing {
         None => {

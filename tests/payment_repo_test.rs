@@ -2,7 +2,7 @@ mod common;
 
 use common::*;
 use fin_sync::domain::payment::PaymentStatus;
-use fin_sync::infra::postgres::payment_repo::{process_payment_event, ProcessResult};
+use fin_sync::infra::postgres::payment_repo::{ProcessResult, process_payment_event};
 
 // ── 1. create_new_payment ──────────────────────────────────────────────────
 
@@ -312,7 +312,13 @@ async fn full_lifecycle_pending_failed() {
 #[tokio::test]
 async fn refund_stores_parent_external_id() {
     let pool = setup_pool("fin_sync_test_payment").await;
-    let r = make_refund("re_parent", "evt_rp1", PaymentStatus::Pending, 1000, "pi_parent_123");
+    let r = make_refund(
+        "re_parent",
+        "evt_rp1",
+        PaymentStatus::Pending,
+        1000,
+        "pi_parent_123",
+    );
     process_payment_event(&pool, &r).await.unwrap();
 
     let row = get_payment(&pool, "re_parent").await.unwrap();
@@ -339,7 +345,10 @@ async fn check_constraint_rejects_invalid_status() {
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("chk_payments_status"), "expected check constraint violation, got: {err}");
+    assert!(
+        err.contains("chk_payments_status"),
+        "expected check constraint violation, got: {err}"
+    );
 }
 
 // ── 20. check_constraint_rejects_negative_amount ───────────────────────────
@@ -361,5 +370,8 @@ async fn check_constraint_rejects_negative_amount() {
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("chk_payments_amount"), "expected check constraint violation, got: {err}");
+    assert!(
+        err.contains("chk_payments_amount"),
+        "expected check constraint violation, got: {err}"
+    );
 }

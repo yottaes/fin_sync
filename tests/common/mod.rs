@@ -174,21 +174,17 @@ pub async fn get_audit_entries(pool: &PgPool, external_id: &str) -> Vec<AuditRow
 }
 
 pub async fn count_audit_entries(pool: &PgPool, external_id: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM audit_log WHERE external_id = $1",
-    )
-    .bind(external_id)
-    .fetch_one(pool)
-    .await
-    .expect("count failed")
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM audit_log WHERE external_id = $1")
+        .bind(external_id)
+        .fetch_one(pool)
+        .await
+        .expect("count failed")
 }
 
 pub async fn count_payments(pool: &PgPool, external_id: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM payments WHERE external_id = $1",
-    )
-    .bind(external_id)
-    .fetch_one(pool)
-    .await
-    .expect("count failed")
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM payments WHERE external_id = $1")
+        .bind(external_id)
+        .fetch_one(pool)
+        .await
+        .expect("count failed")
 }

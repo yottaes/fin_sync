@@ -7,7 +7,9 @@ use {
             money::{Currency, Money, MoneyAmount},
             payment::{NewPayment, NewPaymentParams, PaymentDirection, PaymentStatus},
         },
-        infra::postgres::payment_repo::{ProcessResult, log_passthrough_event, process_payment_event},
+        infra::postgres::payment_repo::{
+            ProcessResult, log_passthrough_event, process_payment_event,
+        },
     },
     axum::{Json, extract::State, http::HeaderMap},
 };
@@ -133,17 +135,14 @@ pub async fn stripe_webhook_handler(
     let sig = headers
         .get("Stripe-Signature")
         .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| {
-            PipelineError::WebhookSignature("missing Stripe-Signature header".into())
-        })?;
+        .ok_or_else(|| PipelineError::WebhookSignature("missing Stripe-Signature header".into()))?;
 
     let event = stripe::Webhook::construct_event(&body, sig, &state.stripe_webhook_secret)
         .map_err(|e| PipelineError::WebhookSignature(e.to_string()))?;
 
     let event_id = event.id.to_string();
     let stripe_created = event.created;
-    let raw_event: serde_json::Value =
-        serde_json::from_str(&body).map_err(PipelineError::from)?;
+    let raw_event: serde_json::Value = serde_json::from_str(&body).map_err(PipelineError::from)?;
     let event_type = raw_event
         .get("type")
         .and_then(|v| v.as_str())
@@ -152,8 +151,8 @@ pub async fn stripe_webhook_handler(
 
     // Add event context to the span so all subsequent logs are correlated.
     tracing::Span::current()
-        .record("event_id", &tracing::field::display(&event_id))
-        .record("event_type", &tracing::field::display(&event_type));
+        .record("event_id", tracing::field::display(&event_id))
+        .record("event_type", tracing::field::display(&event_type));
 
     let payment = match event.data.object {
         stripe::EventObject::PaymentIntent(ref pi) => {

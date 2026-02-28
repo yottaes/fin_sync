@@ -2,7 +2,9 @@ mod common;
 
 use common::*;
 use fin_sync::domain::payment::PaymentStatus;
-use fin_sync::infra::postgres::payment_repo::{log_passthrough_event, process_payment_event, ProcessResult};
+use fin_sync::infra::postgres::payment_repo::{
+    ProcessResult, log_passthrough_event, process_payment_event,
+};
 
 // ── 26. concurrent_duplicate_events ────────────────────────────────────────
 // 10 tasks send the same event_id. Exactly 1 should get Created, rest Duplicate.
@@ -88,9 +90,16 @@ async fn concurrent_passthrough_dedup() {
         let pool = pool.clone();
         let payload = payload.clone();
         handles.push(tokio::spawn(async move {
-            log_passthrough_event(&pool, Some("pi_cpt"), "evt_cpt_same", "charge.created", 1000, &payload)
-                .await
-                .unwrap()
+            log_passthrough_event(
+                &pool,
+                Some("pi_cpt"),
+                "evt_cpt_same",
+                "charge.created",
+                1000,
+                &payload,
+            )
+            .await
+            .unwrap()
         }));
     }
 
@@ -138,5 +147,9 @@ async fn advisory_lock_prevents_double_insert() {
 
     assert_eq!(created, 1, "exactly 1 Created");
     assert_eq!(stale, 1, "exactly 1 Stale (same status)");
-    assert_eq!(count_payments(&pool, "pi_adv_lock").await, 1, "exactly 1 row");
+    assert_eq!(
+        count_payments(&pool, "pi_adv_lock").await,
+        1,
+        "exactly 1 row"
+    );
 }
