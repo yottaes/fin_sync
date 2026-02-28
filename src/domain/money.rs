@@ -1,4 +1,5 @@
 use {
+    super::error::PipelineError,
     serde::{Deserialize, Serialize},
     std::fmt,
     std::ops::{Add, Sub},
@@ -74,7 +75,7 @@ impl fmt::Display for Currency {
 }
 
 impl TryFrom<&str> for Currency {
-    type Error = String;
+    type Error = PipelineError;
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
@@ -82,7 +83,9 @@ impl TryFrom<&str> for Currency {
             "eur" => Ok(Self::Eur),
             "gbp" => Ok(Self::Gbp),
             "jpy" => Ok(Self::Jpy),
-            other => Err(format!("unknown currency: {other}")),
+            other => Err(PipelineError::Validation(format!(
+                "unknown currency: {other}"
+            ))),
         }
     }
 }
