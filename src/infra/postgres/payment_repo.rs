@@ -178,7 +178,9 @@ pub async fn process_payment_event(
             let old_status = PaymentStatus::try_from(old_status_str.as_str())?;
 
             // Temporal check: is this event newer than what we've already processed?
-            if payment.stripe_created() <= last_stripe_created {
+            // Use strict < because Stripe events within the same second share
+            // a timestamp — equal timestamps fall through to the state machine.
+            if payment.stripe_created() < last_stripe_created {
                 let mut audit = payment.audit_entry("webhook:stripe", "event_received");
                 audit.detail = serde_json::json!({
                     "event_type": payment.event_type(),

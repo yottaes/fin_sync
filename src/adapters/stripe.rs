@@ -123,6 +123,11 @@ fn payment_from_refund(
     ))
 }
 
+#[tracing::instrument(
+    name = "webhook",
+    skip_all,
+    fields(event_id = tracing::field::Empty, event_type = tracing::field::Empty)
+)]
 pub async fn stripe_webhook_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -147,6 +152,11 @@ pub async fn stripe_webhook_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
+
+    // Add event context to the span so all subsequent logs are correlated.
+    tracing::Span::current()
+        .record("event_id", &tracing::field::display(&event_id))
+        .record("event_type", &tracing::field::display(&event_type));
 
     let payment = match event.data.object {
         stripe::EventObject::PaymentIntent(ref pi) => {
