@@ -33,7 +33,7 @@ pub async fn log_passthrough_event(
     let mut tx = pool.begin().await?;
 
     // Dedup: record event, bail if already seen.
-    let inserted = sqlx::query_scalar!(
+    let inserted: Option<bool> = sqlx::query_scalar!(
         r#"
         INSERT INTO provider_events (event_id, object_id, event_type, provider_ts, payload)
         VALUES ($1, COALESCE($2, ''), $3, $4, $5)
@@ -56,10 +56,11 @@ pub async fn log_passthrough_event(
 
     let entity_id = match external_id {
         Some(eid) => {
-            let row = sqlx::query!("SELECT id FROM payments WHERE external_id = $1", eid)
-                .fetch_optional(&mut *tx)
-                .await?;
-            row.map(|r| r.id)
+            let id: Option<Uuid> =
+                sqlx::query_scalar!("SELECT id FROM payments WHERE external_id = $1", eid)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            id
         }
         None => None,
     };
@@ -106,7 +107,7 @@ pub async fn process_payment_event(
     .await?;
 
     // 2. Dedup: record the Stripe event. If already seen, bail early.
-    let inserted = sqlx::query_scalar!(
+    let inserted: Option<bool> = sqlx::query_scalar!(
         r#"
         INSERT INTO provider_events (event_id, object_id, event_type, provider_ts, payload)
         VALUES ($1, $2, $3, $4, $5)
