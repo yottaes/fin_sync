@@ -4,7 +4,7 @@ pub async fn insert_audit_entry(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     entry: &NewAuditEntry,
 ) -> Result<bool, PipelineError> {
-    let result = sqlx::query!(
+    let result: sqlx::postgres::PgQueryResult = sqlx::query!(
         r#"
         INSERT INTO audit_log (id, entity_type, entity_id, external_id, event_id, action, actor, detail)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)

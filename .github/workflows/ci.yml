@@ -49,5 +49,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install sqlx-cli --no-default-features --features postgres
+      - run: cargo sqlx migrate run
       - run: cargo sqlx prepare --check --workspace
       - run: cargo test
