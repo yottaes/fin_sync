@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use fin_sync::domain::id::{EventId, ExternalId};
 use fin_sync::domain::money::{Currency, Money, MoneyAmount};
 use fin_sync::domain::payment::{NewPayment, NewPaymentParams, PaymentDirection, PaymentStatus};
 use sqlx::PgPool;
@@ -86,7 +87,7 @@ pub fn make_payment(
     provider_ts: i64,
 ) -> NewPayment {
     NewPayment::new(NewPaymentParams {
-        external_id: external_id.to_string(),
+        external_id: ExternalId::new(external_id),
         source: "stripe".to_string(),
         event_type: format!("payment_intent.{}", status.as_str()),
         direction: PaymentDirection::Inbound,
@@ -94,7 +95,7 @@ pub fn make_payment(
         status,
         metadata: serde_json::json!({}),
         raw_event: serde_json::json!({"id": event_id}),
-        last_event_id: event_id.to_string(),
+        last_event_id: EventId::new(event_id),
         parent_external_id: None,
         provider_ts,
     })
@@ -109,7 +110,7 @@ pub fn make_refund(
     parent_external_id: &str,
 ) -> NewPayment {
     NewPayment::new(NewPaymentParams {
-        external_id: external_id.to_string(),
+        external_id: ExternalId::new(external_id),
         source: "stripe".to_string(),
         event_type: format!("charge.refund.{}", status.as_str()),
         direction: PaymentDirection::Outbound,
@@ -117,8 +118,8 @@ pub fn make_refund(
         status,
         metadata: serde_json::json!({}),
         raw_event: serde_json::json!({"id": event_id}),
-        last_event_id: event_id.to_string(),
-        parent_external_id: Some(parent_external_id.to_string()),
+        last_event_id: EventId::new(event_id),
+        parent_external_id: Some(ExternalId::new(parent_external_id)),
         provider_ts,
     })
 }

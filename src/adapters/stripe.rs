@@ -4,6 +4,7 @@ use {
         adapters::api_errors::ApiError,
         domain::{
             error::PipelineError,
+            id::{EventId, ExternalId},
             money::{Currency, Money, MoneyAmount},
             payment::{NewPayment, NewPaymentParams, PaymentDirection, PaymentStatus},
         },
@@ -71,7 +72,7 @@ fn payment_from_pi(
     let metadata = serde_json::to_value(&pi.metadata)?;
 
     Ok(NewPayment::new(NewPaymentParams {
-        external_id: pi.id.to_string(),
+        external_id: ExternalId::new(pi.id.to_string()),
         source: "stripe".into(),
         event_type: event_type.into(),
         direction: PaymentDirection::Inbound,
@@ -79,7 +80,7 @@ fn payment_from_pi(
         status,
         metadata,
         raw_event,
-        last_event_id: event_id.into(),
+        last_event_id: EventId::new(event_id),
         parent_external_id: None,
         provider_ts: stripe_created,
     }))
@@ -102,13 +103,15 @@ fn payment_from_refund(
         .transpose()?
         .unwrap_or(serde_json::Value::Null);
 
-    let parent_pi_id = refund.payment_intent.as_ref().map(|e| match e {
-        stripe::Expandable::Id(id) => id.to_string(),
-        stripe::Expandable::Object(pi) => pi.id.to_string(),
+    let parent_pi_id = refund.payment_intent.as_ref().map(|e| {
+        ExternalId::new(match e {
+            stripe::Expandable::Id(id) => id.to_string(),
+            stripe::Expandable::Object(pi) => pi.id.to_string(),
+        })
     });
 
     Ok(NewPayment::new(NewPaymentParams {
-        external_id: refund.id.to_string(),
+        external_id: ExternalId::new(refund.id.to_string()),
         source: "stripe".into(),
         event_type: event_type.into(),
         direction: PaymentDirection::Outbound,
@@ -116,7 +119,7 @@ fn payment_from_refund(
         status,
         metadata,
         raw_event,
-        last_event_id: event_id.into(),
+        last_event_id: EventId::new(event_id),
         parent_external_id: parent_pi_id,
         provider_ts: stripe_created,
     }))
