@@ -28,12 +28,15 @@ impl PaymentStatus {
 
     /// Exhaustive transition table. Every allowed edge is listed explicitly.
     /// If it's not here, it's not allowed.
+    ///
+    /// PI rows (pi_xxx):  Pending → Succeeded | Failed
+    /// Refund rows (re_xxx): Pending → Refunded | Failed
     pub fn can_transition_to(&self, new: &Self) -> bool {
         matches!(
             (self, new),
             (Self::Pending, Self::Succeeded)
                 | (Self::Pending, Self::Failed)
-                | (Self::Succeeded, Self::Refunded)
+                | (Self::Pending, Self::Refunded)
         )
     }
 }
@@ -101,7 +104,7 @@ pub struct NewPaymentParams {
     pub raw_event: serde_json::Value,
     pub last_event_id: String,
     pub parent_external_id: Option<String>,
-    pub stripe_created: i64,
+    pub provider_ts: i64,
 }
 
 /// For INSERT — id auto-generated via Uuid::now_v7().
@@ -118,7 +121,7 @@ pub struct NewPayment {
     raw_event: serde_json::Value,
     last_event_id: String,
     parent_external_id: Option<String>,
-    stripe_created: i64,
+    provider_ts: i64,
 }
 
 impl NewPayment {
@@ -135,7 +138,7 @@ impl NewPayment {
             raw_event: p.raw_event,
             last_event_id: p.last_event_id,
             parent_external_id: p.parent_external_id,
-            stripe_created: p.stripe_created,
+            provider_ts: p.provider_ts,
         }
     }
 
@@ -183,8 +186,8 @@ impl NewPayment {
         self.parent_external_id.as_deref()
     }
 
-    pub fn stripe_created(&self) -> i64 {
-        self.stripe_created
+    pub fn provider_ts(&self) -> i64 {
+        self.provider_ts
     }
 
     pub fn audit_entry(&self, actor: &str, action: &str) -> NewAuditEntry {
@@ -216,7 +219,7 @@ mod tests {
         use PaymentStatus::*;
         assert!(Pending.can_transition_to(&Succeeded));
         assert!(Pending.can_transition_to(&Failed));
-        assert!(Succeeded.can_transition_to(&Refunded));
+        assert!(Pending.can_transition_to(&Refunded));
     }
 
     #[test]
@@ -231,7 +234,7 @@ mod tests {
         // impossible edges
         assert!(!Failed.can_transition_to(&Succeeded));
         assert!(!Failed.can_transition_to(&Refunded));
-        assert!(!Pending.can_transition_to(&Refunded));
+        assert!(!Succeeded.can_transition_to(&Refunded));
         // terminal
         assert!(!Refunded.can_transition_to(&Pending));
         assert!(!Refunded.can_transition_to(&Succeeded));
@@ -287,7 +290,7 @@ mod tests {
             raw_event: serde_json::json!({"id": "evt_1"}),
             last_event_id: "evt_1".into(),
             parent_external_id: None,
-            stripe_created: 1709136000,
+            provider_ts: 1709136000,
         });
 
         let audit = p.audit_entry("webhook:stripe", "created");
