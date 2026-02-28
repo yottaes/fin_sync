@@ -1,6 +1,7 @@
 use {
     super::audit::NewAuditEntry,
     super::error::PipelineError,
+    super::id::{EventId, ExternalId},
     super::money::Money,
     serde::{Deserialize, Serialize},
     std::fmt,
@@ -94,7 +95,7 @@ impl TryFrom<&str> for PaymentDirection {
 
 /// Named params for constructing a NewPayment. All fields explicit at the call site.
 pub struct NewPaymentParams {
-    pub external_id: String,
+    pub external_id: ExternalId,
     pub source: String,
     pub event_type: String,
     pub direction: PaymentDirection,
@@ -102,8 +103,8 @@ pub struct NewPaymentParams {
     pub status: PaymentStatus,
     pub metadata: serde_json::Value,
     pub raw_event: serde_json::Value,
-    pub last_event_id: String,
-    pub parent_external_id: Option<String>,
+    pub last_event_id: EventId,
+    pub parent_external_id: Option<ExternalId>,
     pub provider_ts: i64,
 }
 
@@ -111,7 +112,7 @@ pub struct NewPaymentParams {
 #[derive(Debug, Clone)]
 pub struct NewPayment {
     id: Uuid,
-    external_id: String,
+    external_id: ExternalId,
     source: String,
     event_type: String,
     direction: PaymentDirection,
@@ -119,8 +120,8 @@ pub struct NewPayment {
     status: PaymentStatus,
     metadata: serde_json::Value,
     raw_event: serde_json::Value,
-    last_event_id: String,
-    parent_external_id: Option<String>,
+    last_event_id: EventId,
+    parent_external_id: Option<ExternalId>,
     provider_ts: i64,
 }
 
@@ -147,7 +148,7 @@ impl NewPayment {
     }
 
     pub fn external_id(&self) -> &str {
-        &self.external_id
+        self.external_id.as_str()
     }
 
     pub fn source(&self) -> &str {
@@ -179,11 +180,11 @@ impl NewPayment {
     }
 
     pub fn last_event_id(&self) -> &str {
-        &self.last_event_id
+        self.last_event_id.as_str()
     }
 
     pub fn parent_external_id(&self) -> Option<&str> {
-        self.parent_external_id.as_deref()
+        self.parent_external_id.as_ref().map(|id| id.as_str())
     }
 
     pub fn provider_ts(&self) -> i64 {
@@ -195,8 +196,8 @@ impl NewPayment {
             id: Uuid::now_v7(),
             entity_type: "payment".to_string(),
             entity_id: Some(self.id),
-            external_id: Some(self.external_id.clone()),
-            event_id: self.last_event_id.clone(),
+            external_id: Some(self.external_id.clone().into_inner()),
+            event_id: self.last_event_id.clone().into_inner(),
             action: action.to_string(),
             actor: actor.to_string(),
             detail: serde_json::json!({
@@ -280,8 +281,10 @@ mod tests {
 
     #[test]
     fn new_payment_audit_entry() {
+        use crate::domain::id::{EventId, ExternalId};
+
         let p = NewPayment::new(NewPaymentParams {
-            external_id: "pi_123".into(),
+            external_id: ExternalId::new("pi_123"),
             source: "stripe".into(),
             event_type: "payment_intent.succeeded".into(),
             direction: PaymentDirection::Inbound,
@@ -289,7 +292,7 @@ mod tests {
             status: PaymentStatus::Succeeded,
             metadata: serde_json::json!({}),
             raw_event: serde_json::json!({"id": "evt_1"}),
-            last_event_id: "evt_1".into(),
+            last_event_id: EventId::new("evt_1"),
             parent_external_id: None,
             provider_ts: 1709136000,
         });

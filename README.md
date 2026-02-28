@@ -1,111 +1,109 @@
-# fin-sync (Financial Reconciliation Gateway)
+# fin_sync
 
-A high-reliability payment reconciliation and synchronization service built in Rust. `fin-sync` acts as a **judge layer** between payment providers, ERP systems, and CRMs. It verifies financial data consistency across all systems, synchronizes statuses, and maintains an immutable audit trail.
+Payment synchronization service that sits between payment providers and ERP systems. Ingests payment events via webhooks, maintains canonical payment state, and keeps an immutable audit trail. Handles both directions: customer payments in (charges) and company payments out (refunds, vendor payouts).
 
-Generic by design: it plugs into any financial pipeline where multiple systems must agree on payment state. It is not a payment processor, nor a parser — it is a pure verification and synchronization engine.
+## What it does today
 
-## 🚀 Core Philosophy
+- **Stripe webhook processing** — verifies signatures, normalizes PaymentIntent and Refund events into a unified payment model, logs charge events as passthrough.
+- **State machine** — enforces valid status transitions (Pending -> Succeeded | Failed | Refunded). Rejects anomalous transitions, skips stale/duplicate events.
+- **Concurrency control** — advisory locks serialize processing per payment object. No row-level lock contention, no insert races.
+- **Dedup** — provider_events table catches duplicate webhook deliveries before any state mutation.
+- **Audit log** — every state change, skip, and anomaly is recorded in the same transaction as the payment mutation. Append-only.
+- **Compile-time SQL** — all production queries use `sqlx::query!` macros, verified against the real schema at build time. CI uses offline mode via `.sqlx/` metadata.
 
-- **The Judge, Not the Extractor:** The service expects upstream systems to provide structured, typed data (JSON).
-  It compares states and issues verdicts; it does not parse raw documents.
+## Architecture
 
-- **Strict Schema Validation (Fail Fast):** Incoming data must strictly conform to expected schemas. Missing fields, wrong types,
-  or out-of-bounds values immediately return a `422 Unprocessable Entity`. No partial parsing, no silent failures.
+```
+Payment Providers (Stripe, ...)
+         |
+         V
+   [POST /webhook]
+         |
+    Signature verification
+         |
+    Event normalization (PI / Refund / Charge / unknown)
+         |
+    ┌────┴─────┐
+    V          V
+ Payments   Passthrough
+ pipeline     audit
+    |            |
+    V            V
+ provider_events (dedup)
+    |
+ advisory lock (serialize per object)
+    |
+ state machine check
+    |
+ ┌──┴──┐
+ V     V
+INSERT  UPDATE + audit_log
+(new)   (transition)
+```
 
-- **Type-Driven Money Handling:** All monetary amounts are represented as `i64` in the smallest currency unit (e.g., cents).
-  Floating-point numbers are strictly prohibited. The custom `MoneyAmount` type is always paired with a `Currency` enum,
-  making currency mismatches a compile-time error.
+## Data model
 
-- **Pure Push Model (MVP):** `fin-sync` relies entirely on webhooks and external data pushes. It does not poll or
-  fetch data from external APIs, ensuring predictable load and immediate reactivity.
+| Table | Purpose |
+|-------|---------|
+| `payments` | Canonical payment state. One row per PI or Refund (`external_id`). Tracks status, amount, currency, direction, last event. |
+| `provider_events` | Dedup log. One row per Stripe event ID. |
+| `audit_log` | Append-only. Records created/status_changed/event_received with JSONB detail. Keyed by `event_id` (unique). |
+| `external_records` | ERP/external system records (schema ready, not yet populated). |
+| `reconciliations` | Matching results between payments and external records (schema ready, not yet populated). |
 
-## 🏗 Architecture & Data Flow
+## Key design decisions
 
-External systems push data into the service. Validation and persistence happen immediately. Background tasks process the reconciliation asynchronously, ensuring the HTTP layer remains fast and decoupled from heavy logic.
+- `external_id` = `pi_xxx` or `re_xxx` (the payment object), not `evt_xxx`. One row per payment, not per event.
+- Status rank prevents regression: Pending(0) < Succeeded/Failed(1) < Refunded(2).
+- Validation errors return 200 to Stripe (stop retry loop). DB errors return 500 (Stripe retries).
+- Money is always `i64` cents + currency enum. No floats.
 
-    Payment Providers (Stripe, etc.)
-             |
-             V
-       [Webhook Endpoints] ──→ Event Validation ──→ Postgres (payments table)
-                                                            |
-    External Systems (ERP, CRM)                             V
-             |                                      tokio::spawn(pipeline)
-             V                                              |
-     [Data Intake Endpoints] ──→ Schema Validation ──→ Postgres
-                                                   (external_records)
-                                                            |
-                                                            V
-                                                  Reconciliation Engine
-                                                         (Judge)
-                                                            |
-                                                  ┌─────────┼─────────┐
-                                                  V         V         V
-                                            Postgres   Postgres   Postgres
-                                    (reconciliations)(audit_log)(analytics)
-                                                  |
-                                                  V
-                                              [REST API]
-                                      Status / Reports / Analytics
+## Tech stack
 
-## 🔌 Adapter Pattern (Validation)
+Rust, Tokio, Axum, sqlx (Postgres, compile-time checked), async-stripe, tracing.
 
-External data sources are abstracted behind validation traits. Adding a new system simply means implementing the corresponding trait:
+## Project structure
 
-- `PaymentProvider` — Validate and normalize incoming payment webhooks (e.g., Stripe signature verification).
-- `ERPValidator` — Validate incoming ERP records.
-- `CRMValidator` — Validate incoming CRM deal statuses.
+```
+src/
+  adapters/
+    stripe.rs        # webhook handler, event dispatch, Stripe type conversion
+    api_errors.rs    # PipelineError -> HTTP response mapping
+  domain/
+    payment.rs       # NewPayment, PaymentStatus, PaymentDirection, state machine
+    money.rs         # MoneyAmount (u64 cents), Currency enum, Money
+    audit.rs         # NewAuditEntry
+    error.rs         # PipelineError
+  infra/
+    postgres/
+      payment_repo.rs  # process_payment_event, log_passthrough_event (11 queries)
+      audit_repo.rs    # insert_audit_entry (1 query)
+  lib.rs             # AppState
+  main.rs            # server setup, graceful shutdown
+tests/
+  payment_repo_test  # 20 integration tests (lifecycle, transitions, constraints)
+  concurrency_test   # 4 tests (advisory locks, races, dedup under contention)
+  passthrough_test   # 5 tests (charge/unknown event logging)
+  property_test      # 5 property-based tests (money, status transitions)
+migrations/          # 5 SQL migrations (payments, external_records, reconciliations, audit_log, provider_events)
+.sqlx/               # compile-time query metadata (committed, used by CI offline mode)
+```
 
-## 🗄️ Data Model
+## Running
 
-- **`payments`**: Core payment records (`id`, `external_id`, `amount` as `i64`, `currency`, `idempotency_key`).
-- **`external_records`**: Structured data from ERP/CRM (`source`, `external_id`, `record_type`, `amount`, `currency`, `raw_data`).
-- **`reconciliations`**: Matching results (`status`: matched/mismatch/pending/manual_review, `discrepancy_details`).
-- **`audit_log`**: Append-only event log (`entity_type`, `action`, `actor`, `detail`). No `UPDATE` or `DELETE` permitted.
-- **Analytics**: Aggregated views over reconciliation data (match rates, discrepancies).
+```bash
+# Requires Postgres running on localhost:5432
+export DATABASE_URL="postgresql://postgres:password@localhost:5432/postgres"
+export STRIPE_WEBHOOK_SECRET="whsec_..."
 
-## 🛡️ Reliability Guarantees
+cargo run                # start server on :3000
+stripe listen --forward-to localhost:3000/webhook  # forward Stripe events locally
+cargo test               # run all 41 tests
+```
 
-- **Idempotency:** Duplicate submissions are detected and ignored via deterministic provider IDs or `X-Idempotency-Key` headers. Critical for provider retries.
-- **Transactional Audit:** Any state change (e.g., a new reconciliation verdict) is committed to the database in the same SQL transaction as its corresponding `audit_log` entry.
-- **Error Handling:** All pipeline stages return typed `Result<T, PipelineError>`. Failed stages are logged with context and marked for retry or manual review. `unwrap()` is forbidden in production paths.
-- **Backpressure:** Internal bounded `tokio::mpsc` channels ensure that if the database writer falls behind, the async producers wait rather than dropping data.
+## What's next
 
-## 🛠️ Tech Stack
-
-- **Runtime:** Rust, Tokio
-- **Web Framework:** Axum, Tower (rate limiting, timeout, request tracing)
-- **Database:** PostgreSQL via `sqlx` (compile-time checked queries, transactions)
-- **Logging:** `tracing` + `tracing-subscriber` (structured, span-based)
-- **Serialization:** `serde`, `serde_json` (strict deserialization)
-- **Infrastructure:** Docker Compose
-
-## 📂 Project Structure
-
-    fin-sync/
-    ├── Cargo.toml
-    ├── Dockerfile
-    ├── docker-compose.yml
-    ├── proto/                     # Future gRPC definitions
-    ├── migrations/
-    │   ├── 001_create_payments.sql
-    │   ├── 002_create_external_records.sql
-    │   ├── 003_create_reconciliations.sql
-    │   └── 004_create_audit_log.sql
-    ├── src/
-    │   ├── main.rs
-    │   ├── config.rs
-    │   ├── routes/                # Axum HTTP handlers
-    │   ├── domain/                # Core types (MoneyAmount, Currency, errors)
-    │   ├── adapters/              # Validation traits (Stripe, ERP, CRM)
-    │   ├── pipeline/              # Async processing & matching logic
-    │   ├── services/              # Business logic (Reconciler, Audit, Analytics)
-    │   └── db/                    # sqlx queries and connection pool
-    └── README.md
-
-## 🗺️ Future Extensions
-
-- **Internal gRPC API:** High-performance inter-service communication (`tonic` + `prost`).
-- **Pull Model (Cron):** Scheduled fetching from legacy external APIs that do not support webhooks.
-- **Analytical Engine:** DuckDB read-only layer over Postgres data for advanced reporting.
-- **Real-time Alerting:** Webhook callbacks, Slack/email notifications on mismatches.
-- **Multi-Currency:** Exchange rate snapshots for cross-currency reconciliation.
+- **ERP data intake** — endpoints to receive structured records from ERP systems, populate `external_records`.
+- **Reconciliation engine** — match payments against external records, write verdicts to `reconciliations`.
+- **Status API** — query payment state and reconciliation status from outside (the "knock and check" interface).
+- **Vendor payments** — outbound payments beyond refunds (AP, invoices), likely via additional provider adapters.
