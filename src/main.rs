@@ -34,7 +34,7 @@ async fn main() {
         .route("/", get(|| async { "ok" }))
         .route(
             "/webhook",
-            post(fin_sync::adapters::stripe::stripe_webhook_handler),
+            post(fin_sync::adapters::stripe_webhook::wh_handler),
         )
         .layer(DefaultBodyLimit::max(64 * 1024)) // 64 KB — Stripe events are typically <20 KB
         .with_state(state);

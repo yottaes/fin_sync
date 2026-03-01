@@ -2,6 +2,7 @@ pub mod adapters;
 pub mod domain;
 pub mod infra;
 pub mod services;
+pub mod transport;
 
 use std::sync::Arc;
 

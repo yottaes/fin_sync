@@ -1,7 +1,7 @@
 use {
     crate::{
         AppState,
-        adapters::api::errors::ApiError,
+        transport::http::errors::ApiError,
         domain::{
             error::PipelineError,
             id::{EventId, ExternalId},
@@ -135,7 +135,7 @@ fn payment_from_refund(
     skip_all,
     fields(event_id = tracing::field::Empty, event_type = tracing::field::Empty)
 )]
-pub async fn stripe_webhook_handler(
+pub async fn wh_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: String,
