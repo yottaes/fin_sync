@@ -8,6 +8,73 @@ use {
     uuid::Uuid,
 };
 
+// ── Process result ───────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub enum ProcessResult {
+    /// New payment row inserted.
+    Created(Uuid),
+    /// Existing payment row updated (status advanced).
+    Updated(Uuid),
+    /// Event is older than what we've already processed — no state change.
+    Stale(Uuid),
+    /// Stripe event was already processed (duplicate delivery).
+    Duplicate,
+    /// Transition is not valid per state machine — logged as anomaly.
+    Anomaly(Uuid),
+}
+
+// ── Existing payment (read model for decisions) ──────────────────────────────
+
+/// Current state of a payment row, returned by repo for decision-making.
+pub struct ExistingPayment {
+    pub id: Uuid,
+    pub status: PaymentStatus,
+    pub last_provider_ts: i64,
+}
+
+// ── Decision types ───────────────────────────────────────────────────────────
+
+pub enum PaymentAction {
+    Advance { old_status: PaymentStatus },
+    SameStatus,
+    TemporalStale,
+    LogAnomaly { current: PaymentStatus },
+}
+
+impl ExistingPayment {
+    /// Pure decision: what action to take given an incoming payment event.
+    /// Called only when an existing row is found — the `None` (insert) case
+    /// is handled by the caller before reaching this method.
+    pub fn decide(&self, incoming: &NewPayment) -> PaymentAction {
+        if *incoming.status() == self.status {
+            PaymentAction::SameStatus
+        } else if incoming.provider_ts() < self.last_provider_ts {
+            PaymentAction::TemporalStale
+        } else if !self.status.can_transition_to(incoming.status()) {
+            PaymentAction::LogAnomaly {
+                current: self.status.clone(),
+            }
+        } else {
+            PaymentAction::Advance {
+                old_status: self.status.clone(),
+            }
+        }
+    }
+}
+
+// ── Passthrough event ────────────────────────────────────────────────────────
+
+/// Event that we log but don't process as a payment (charges, unknown types).
+pub struct PassthroughEvent {
+    pub external_id: Option<String>,
+    pub event_id: String,
+    pub event_type: String,
+    pub provider_ts: i64,
+    pub raw_payload: serde_json::Value,
+    pub actor: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PaymentStatus {
@@ -284,15 +351,15 @@ mod tests {
         use crate::domain::id::{EventId, ExternalId};
 
         let p = NewPayment::new(NewPaymentParams {
-            external_id: ExternalId::new("pi_123"),
+            external_id: ExternalId::new("pi_123").unwrap(),
             source: "stripe".into(),
             event_type: "payment_intent.succeeded".into(),
             direction: PaymentDirection::Inbound,
-            money: Money::new(MoneyAmount::new(5000), Currency::Eur),
+            money: Money::new(MoneyAmount::new(5000).unwrap(), Currency::Eur),
             status: PaymentStatus::Succeeded,
             metadata: serde_json::json!({}),
             raw_event: serde_json::json!({"id": "evt_1"}),
-            last_event_id: EventId::new("evt_1"),
+            last_event_id: EventId::new("evt_1").unwrap(),
             parent_external_id: None,
             provider_ts: 1709136000,
         });

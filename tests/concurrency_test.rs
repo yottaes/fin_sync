@@ -1,10 +1,8 @@
 mod common;
 
 use common::*;
-use fin_sync::domain::payment::PaymentStatus;
-use fin_sync::infra::postgres::payment_repo::{
-    ProcessResult, log_passthrough_event, process_payment_event,
-};
+use fin_sync::domain::payment::{PassthroughEvent, PaymentStatus, ProcessResult};
+use fin_sync::services::payment_pipeline::{handle_passthrough, process_payment_event};
 
 // ── 26. concurrent_duplicate_events ────────────────────────────────────────
 // 10 tasks send the same event_id. Exactly 1 should get Created, rest Duplicate.
@@ -18,7 +16,7 @@ async fn concurrent_duplicate_events() {
         let pool = pool.clone();
         handles.push(tokio::spawn(async move {
             let p = make_payment("pi_cdup", "evt_cdup_same", PaymentStatus::Pending, 1000 + i);
-            process_payment_event(&pool, &p).await.unwrap()
+            process_payment_event(&pool, &p, "test").await.unwrap()
         }));
     }
 
@@ -46,7 +44,7 @@ async fn concurrent_updates_same_external_id() {
     let pool = setup_pool("fin_sync_test_concurrency").await;
 
     let p = make_payment("pi_cser", "evt_cser_init", PaymentStatus::Pending, 1000);
-    process_payment_event(&pool, &p).await.unwrap();
+    process_payment_event(&pool, &p, "test").await.unwrap();
 
     let mut handles = Vec::new();
     for i in 0..5 {
@@ -54,7 +52,7 @@ async fn concurrent_updates_same_external_id() {
         let evt = format!("evt_cser_{i}");
         handles.push(tokio::spawn(async move {
             let p = make_payment("pi_cser", &evt, PaymentStatus::Succeeded, 2000 + i);
-            process_payment_event(&pool, &p).await.unwrap()
+            process_payment_event(&pool, &p, "test").await.unwrap()
         }));
     }
 
@@ -83,23 +81,20 @@ async fn concurrent_updates_same_external_id() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_passthrough_dedup() {
     let pool = setup_pool("fin_sync_test_concurrency").await;
-    let payload = serde_json::json!({"type": "charge.created"});
 
     let mut handles = Vec::new();
     for _ in 0..10 {
         let pool = pool.clone();
-        let payload = payload.clone();
         handles.push(tokio::spawn(async move {
-            log_passthrough_event(
-                &pool,
-                Some("pi_cpt"),
-                "evt_cpt_same",
-                "charge.created",
-                1000,
-                &payload,
-            )
-            .await
-            .unwrap()
+            let event = PassthroughEvent {
+                external_id: Some("pi_cpt".into()),
+                event_id: "evt_cpt_same".into(),
+                event_type: "charge.created".into(),
+                provider_ts: 1000,
+                raw_payload: serde_json::json!({"type": "charge.created"}),
+                actor: "test".into(),
+            };
+            handle_passthrough(&pool, &event).await.unwrap()
         }));
     }
 
@@ -131,7 +126,7 @@ async fn advisory_lock_prevents_double_insert() {
         let evt = format!("evt_adv_{i}");
         handles.push(tokio::spawn(async move {
             let p = make_payment("pi_adv_lock", &evt, PaymentStatus::Pending, 1000 + i);
-            process_payment_event(&pool, &p).await.unwrap()
+            process_payment_event(&pool, &p, "test").await.unwrap()
         }));
     }
 

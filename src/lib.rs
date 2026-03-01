@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod domain;
 pub mod infra;
+pub mod services;
 
 use std::sync::Arc;
 

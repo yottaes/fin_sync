@@ -1,2 +1,2 @@
-pub mod api_errors;
+pub mod api;
 pub mod stripe;

@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE payments\n        SET status = $1, event_type = $2, metadata = $3,\n            last_event_id = $4, last_provider_ts = $5, updated_at = now()\n        WHERE id = $6\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Jsonb",
+        "Text",
+        "Int8",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "207930fa9ededdcd971b73ab907a8bc4363c6fe37e10050451842566b8e44b2f"
+}

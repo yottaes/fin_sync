@@ -1,27 +1,24 @@
 mod common;
 
 use common::*;
-use fin_sync::domain::payment::PaymentStatus;
-use fin_sync::infra::postgres::payment_repo::{log_passthrough_event, process_payment_event};
+use fin_sync::domain::payment::{PassthroughEvent, PaymentStatus};
+use fin_sync::services::payment_pipeline::{handle_passthrough, process_payment_event};
 
 // ── 21. passthrough_logs_event ─────────────────────────────────────────────
 
 #[tokio::test]
 async fn passthrough_logs_event() {
     let pool = setup_pool("fin_sync_test_passthrough").await;
-    let payload = serde_json::json!({"type": "charge.created"});
 
-    let result = log_passthrough_event(
-        &pool,
-        Some("pi_pt_1"),
-        "evt_pt_1",
-        "charge.created",
-        1000,
-        &payload,
-    )
-    .await
-    .unwrap();
-
+    let event = PassthroughEvent {
+        external_id: Some("pi_pt_1".into()),
+        event_id: "evt_pt_1".into(),
+        event_type: "charge.created".into(),
+        provider_ts: 1000,
+        raw_payload: serde_json::json!({"type": "charge.created"}),
+        actor: "test".into(),
+    };
+    let result = handle_passthrough(&pool, &event).await.unwrap();
     assert!(result); // new event
 
     // Check audit log
@@ -37,30 +34,20 @@ async fn passthrough_logs_event() {
 #[tokio::test]
 async fn passthrough_duplicate_returns_false() {
     let pool = setup_pool("fin_sync_test_passthrough").await;
-    let payload = serde_json::json!({"type": "charge.created"});
 
-    let r1 = log_passthrough_event(
-        &pool,
-        Some("pi_ptd"),
-        "evt_ptd_1",
-        "charge.created",
-        1000,
-        &payload,
-    )
-    .await
-    .unwrap();
+    let event = PassthroughEvent {
+        external_id: Some("pi_ptd".into()),
+        event_id: "evt_ptd_1".into(),
+        event_type: "charge.created".into(),
+        provider_ts: 1000,
+        raw_payload: serde_json::json!({"type": "charge.created"}),
+        actor: "test".into(),
+    };
+
+    let r1 = handle_passthrough(&pool, &event).await.unwrap();
     assert!(r1);
 
-    let r2 = log_passthrough_event(
-        &pool,
-        Some("pi_ptd"),
-        "evt_ptd_1",
-        "charge.created",
-        1000,
-        &payload,
-    )
-    .await
-    .unwrap();
+    let r2 = handle_passthrough(&pool, &event).await.unwrap();
     assert!(!r2); // duplicate
 }
 
@@ -77,21 +64,19 @@ async fn passthrough_links_existing_payment() {
         PaymentStatus::Pending,
         1000,
     );
-    process_payment_event(&pool, &p).await.unwrap();
+    process_payment_event(&pool, &p, "test").await.unwrap();
     let payment_row = get_payment(&pool, "pi_ptlink").await.unwrap();
 
     // Now log a passthrough event referencing the same external_id
-    let payload = serde_json::json!({"type": "charge.succeeded"});
-    log_passthrough_event(
-        &pool,
-        Some("pi_ptlink"),
-        "evt_ptlink_pt",
-        "charge.succeeded",
-        2000,
-        &payload,
-    )
-    .await
-    .unwrap();
+    let event = PassthroughEvent {
+        external_id: Some("pi_ptlink".into()),
+        event_id: "evt_ptlink_pt".into(),
+        event_type: "charge.succeeded".into(),
+        provider_ts: 2000,
+        raw_payload: serde_json::json!({"type": "charge.succeeded"}),
+        actor: "test".into(),
+    };
+    handle_passthrough(&pool, &event).await.unwrap();
 
     // The audit entry should have entity_id pointing to the payment
     let audits: Vec<_> = sqlx::query_as::<_, (Option<uuid::Uuid>, String)>(
@@ -111,18 +96,16 @@ async fn passthrough_links_existing_payment() {
 #[tokio::test]
 async fn passthrough_no_existing_payment() {
     let pool = setup_pool("fin_sync_test_passthrough").await;
-    let payload = serde_json::json!({"type": "charge.created"});
 
-    log_passthrough_event(
-        &pool,
-        Some("pi_nonexistent"),
-        "evt_ptnone",
-        "charge.created",
-        1000,
-        &payload,
-    )
-    .await
-    .unwrap();
+    let event = PassthroughEvent {
+        external_id: Some("pi_nonexistent".into()),
+        event_id: "evt_ptnone".into(),
+        event_type: "charge.created".into(),
+        provider_ts: 1000,
+        raw_payload: serde_json::json!({"type": "charge.created"}),
+        actor: "test".into(),
+    };
+    handle_passthrough(&pool, &event).await.unwrap();
 
     // entity_id should be NULL since no matching payment exists
     let row: Option<(Option<uuid::Uuid>,)> =
@@ -140,12 +123,16 @@ async fn passthrough_no_existing_payment() {
 #[tokio::test]
 async fn passthrough_with_none_external_id() {
     let pool = setup_pool("fin_sync_test_passthrough").await;
-    let payload = serde_json::json!({"type": "unknown.event"});
 
-    let result = log_passthrough_event(&pool, None, "evt_ptnull", "unknown.event", 1000, &payload)
-        .await
-        .unwrap();
-
+    let event = PassthroughEvent {
+        external_id: None,
+        event_id: "evt_ptnull".into(),
+        event_type: "unknown.event".into(),
+        provider_ts: 1000,
+        raw_payload: serde_json::json!({"type": "unknown.event"}),
+        actor: "test".into(),
+    };
+    let result = handle_passthrough(&pool, &event).await.unwrap();
     assert!(result);
 
     // Audit entry should have NULL external_id and NULL entity_id
