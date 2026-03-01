@@ -9,9 +9,13 @@ use {
 pub struct MoneyAmount(i64);
 
 impl MoneyAmount {
-    pub fn new(cents: i64) -> Self {
-        assert!(cents >= 0, "MoneyAmount cannot be negative, got: {cents}");
-        Self(cents)
+    pub fn new(cents: i64) -> Result<Self, PipelineError> {
+        if cents < 0 {
+            return Err(PipelineError::Validation(format!(
+                "MoneyAmount cannot be negative, got: {cents}"
+            )));
+        }
+        Ok(Self(cents))
     }
 
     pub fn cents(&self) -> i64 {

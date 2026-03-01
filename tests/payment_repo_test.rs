@@ -1,8 +1,8 @@
 mod common;
 
 use common::*;
-use fin_sync::domain::payment::PaymentStatus;
-use fin_sync::infra::postgres::payment_repo::{ProcessResult, process_payment_event};
+use fin_sync::domain::payment::{PaymentStatus, ProcessResult};
+use fin_sync::services::payment_pipeline::process_payment_event;
 
 // ── 1. create_new_payment ──────────────────────────────────────────────────
 
@@ -11,7 +11,7 @@ async fn create_new_payment() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p = make_payment("pi_create_1", "evt_c1", PaymentStatus::Pending, 1000);
 
-    let result = process_payment_event(&pool, &p).await.unwrap();
+    let result = process_payment_event(&pool, &p, "test").await.unwrap();
     assert!(matches!(result, ProcessResult::Created(_)));
 
     let row = get_payment(&pool, "pi_create_1").await.unwrap();
@@ -28,7 +28,7 @@ async fn create_new_payment() {
 async fn create_writes_audit_entry() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p = make_payment("pi_audit_1", "evt_a1", PaymentStatus::Pending, 1000);
-    process_payment_event(&pool, &p).await.unwrap();
+    process_payment_event(&pool, &p, "test").await.unwrap();
 
     let audits = get_audit_entries(&pool, "pi_audit_1").await;
     assert_eq!(audits.len(), 1);
@@ -42,10 +42,10 @@ async fn create_writes_audit_entry() {
 async fn transition_pending_to_succeeded() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_trans_s", "evt_t1", PaymentStatus::Pending, 1000);
-    process_payment_event(&pool, &p1).await.unwrap();
+    process_payment_event(&pool, &p1, "test").await.unwrap();
 
     let p2 = make_payment("pi_trans_s", "evt_t2", PaymentStatus::Succeeded, 2000);
-    let result = process_payment_event(&pool, &p2).await.unwrap();
+    let result = process_payment_event(&pool, &p2, "test").await.unwrap();
     assert!(matches!(result, ProcessResult::Updated(_)));
 
     let row = get_payment(&pool, "pi_trans_s").await.unwrap();
@@ -59,10 +59,10 @@ async fn transition_pending_to_succeeded() {
 async fn transition_pending_to_failed() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_trans_f", "evt_tf1", PaymentStatus::Pending, 1000);
-    process_payment_event(&pool, &p1).await.unwrap();
+    process_payment_event(&pool, &p1, "test").await.unwrap();
 
     let p2 = make_payment("pi_trans_f", "evt_tf2", PaymentStatus::Failed, 2000);
-    let result = process_payment_event(&pool, &p2).await.unwrap();
+    let result = process_payment_event(&pool, &p2, "test").await.unwrap();
     assert!(matches!(result, ProcessResult::Updated(_)));
 
     let row = get_payment(&pool, "pi_trans_f").await.unwrap();
@@ -75,10 +75,10 @@ async fn transition_pending_to_failed() {
 async fn transition_pending_to_refunded() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_trans_r", "evt_tr1", PaymentStatus::Pending, 1000);
-    process_payment_event(&pool, &p1).await.unwrap();
+    process_payment_event(&pool, &p1, "test").await.unwrap();
 
     let p2 = make_payment("pi_trans_r", "evt_tr2", PaymentStatus::Refunded, 2000);
-    let result = process_payment_event(&pool, &p2).await.unwrap();
+    let result = process_payment_event(&pool, &p2, "test").await.unwrap();
     assert!(matches!(result, ProcessResult::Updated(_)));
 
     let row = get_payment(&pool, "pi_trans_r").await.unwrap();
@@ -91,10 +91,10 @@ async fn transition_pending_to_refunded() {
 async fn status_change_writes_audit() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_sca", "evt_sca1", PaymentStatus::Pending, 1000);
-    process_payment_event(&pool, &p1).await.unwrap();
+    process_payment_event(&pool, &p1, "test").await.unwrap();
 
     let p2 = make_payment("pi_sca", "evt_sca2", PaymentStatus::Succeeded, 2000);
-    process_payment_event(&pool, &p2).await.unwrap();
+    process_payment_event(&pool, &p2, "test").await.unwrap();
 
     let audits = get_audit_entries(&pool, "pi_sca").await;
     assert_eq!(audits.len(), 2);
@@ -109,11 +109,11 @@ async fn status_change_writes_audit() {
 async fn duplicate_event_returns_duplicate() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_dup", "evt_dup1", PaymentStatus::Pending, 1000);
-    process_payment_event(&pool, &p1).await.unwrap();
+    process_payment_event(&pool, &p1, "test").await.unwrap();
 
     // Same event_id, different NewPayment instance
     let p2 = make_payment("pi_dup", "evt_dup1", PaymentStatus::Pending, 1000);
-    let result = process_payment_event(&pool, &p2).await.unwrap();
+    let result = process_payment_event(&pool, &p2, "test").await.unwrap();
     assert!(matches!(result, ProcessResult::Duplicate));
 }
 
@@ -123,10 +123,10 @@ async fn duplicate_event_returns_duplicate() {
 async fn same_status_returns_stale() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_same", "evt_same1", PaymentStatus::Pending, 1000);
-    process_payment_event(&pool, &p1).await.unwrap();
+    process_payment_event(&pool, &p1, "test").await.unwrap();
 
     let p2 = make_payment("pi_same", "evt_same2", PaymentStatus::Pending, 2000);
-    let result = process_payment_event(&pool, &p2).await.unwrap();
+    let result = process_payment_event(&pool, &p2, "test").await.unwrap();
     assert!(matches!(result, ProcessResult::Stale(_)));
 
     // No additional audit entry for same-status stale
@@ -140,11 +140,11 @@ async fn same_status_returns_stale() {
 async fn older_timestamp_returns_stale() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_old", "evt_old1", PaymentStatus::Pending, 2000);
-    process_payment_event(&pool, &p1).await.unwrap();
+    process_payment_event(&pool, &p1, "test").await.unwrap();
 
     // Older timestamp with different status
     let p2 = make_payment("pi_old", "evt_old2", PaymentStatus::Succeeded, 1000);
-    let result = process_payment_event(&pool, &p2).await.unwrap();
+    let result = process_payment_event(&pool, &p2, "test").await.unwrap();
     assert!(matches!(result, ProcessResult::Stale(_)));
 
     let row = get_payment(&pool, "pi_old").await.unwrap();
@@ -157,10 +157,10 @@ async fn older_timestamp_returns_stale() {
 async fn stale_event_writes_audit() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_stale_a", "evt_sa1", PaymentStatus::Pending, 2000);
-    process_payment_event(&pool, &p1).await.unwrap();
+    process_payment_event(&pool, &p1, "test").await.unwrap();
 
     let p2 = make_payment("pi_stale_a", "evt_sa2", PaymentStatus::Succeeded, 1000);
-    process_payment_event(&pool, &p2).await.unwrap();
+    process_payment_event(&pool, &p2, "test").await.unwrap();
 
     let audits = get_audit_entries(&pool, "pi_stale_a").await;
     assert_eq!(audits.len(), 2); // "created" + "event_received" (stale)
@@ -174,12 +174,12 @@ async fn stale_event_writes_audit() {
 async fn invalid_transition_succeeded_to_pending() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_inv1", "evt_inv1a", PaymentStatus::Pending, 1000);
-    process_payment_event(&pool, &p1).await.unwrap();
+    process_payment_event(&pool, &p1, "test").await.unwrap();
     let p2 = make_payment("pi_inv1", "evt_inv1b", PaymentStatus::Succeeded, 2000);
-    process_payment_event(&pool, &p2).await.unwrap();
+    process_payment_event(&pool, &p2, "test").await.unwrap();
 
     let p3 = make_payment("pi_inv1", "evt_inv1c", PaymentStatus::Pending, 3000);
-    let result = process_payment_event(&pool, &p3).await.unwrap();
+    let result = process_payment_event(&pool, &p3, "test").await.unwrap();
     assert!(matches!(result, ProcessResult::Anomaly(_)));
 }
 
@@ -189,12 +189,12 @@ async fn invalid_transition_succeeded_to_pending() {
 async fn invalid_transition_failed_to_succeeded() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_inv2", "evt_inv2a", PaymentStatus::Pending, 1000);
-    process_payment_event(&pool, &p1).await.unwrap();
+    process_payment_event(&pool, &p1, "test").await.unwrap();
     let p2 = make_payment("pi_inv2", "evt_inv2b", PaymentStatus::Failed, 2000);
-    process_payment_event(&pool, &p2).await.unwrap();
+    process_payment_event(&pool, &p2, "test").await.unwrap();
 
     let p3 = make_payment("pi_inv2", "evt_inv2c", PaymentStatus::Succeeded, 3000);
-    let result = process_payment_event(&pool, &p3).await.unwrap();
+    let result = process_payment_event(&pool, &p3, "test").await.unwrap();
     assert!(matches!(result, ProcessResult::Anomaly(_)));
 }
 
@@ -204,12 +204,12 @@ async fn invalid_transition_failed_to_succeeded() {
 async fn anomaly_writes_audit() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_anom", "evt_anom1", PaymentStatus::Pending, 1000);
-    process_payment_event(&pool, &p1).await.unwrap();
+    process_payment_event(&pool, &p1, "test").await.unwrap();
     let p2 = make_payment("pi_anom", "evt_anom2", PaymentStatus::Succeeded, 2000);
-    process_payment_event(&pool, &p2).await.unwrap();
+    process_payment_event(&pool, &p2, "test").await.unwrap();
 
     let p3 = make_payment("pi_anom", "evt_anom3", PaymentStatus::Pending, 3000);
-    process_payment_event(&pool, &p3).await.unwrap();
+    process_payment_event(&pool, &p3, "test").await.unwrap();
 
     let audits = get_audit_entries(&pool, "pi_anom").await;
     // "created" + "status_changed" + "event_received" (anomaly)
@@ -224,13 +224,13 @@ async fn anomaly_writes_audit() {
 async fn anomaly_updates_tracking_fields() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_track", "evt_track1", PaymentStatus::Pending, 1000);
-    process_payment_event(&pool, &p1).await.unwrap();
+    process_payment_event(&pool, &p1, "test").await.unwrap();
     let p2 = make_payment("pi_track", "evt_track2", PaymentStatus::Succeeded, 2000);
-    process_payment_event(&pool, &p2).await.unwrap();
+    process_payment_event(&pool, &p2, "test").await.unwrap();
 
     // Anomaly: Succeeded → Pending at ts=3000
     let p3 = make_payment("pi_track", "evt_track3", PaymentStatus::Pending, 3000);
-    process_payment_event(&pool, &p3).await.unwrap();
+    process_payment_event(&pool, &p3, "test").await.unwrap();
 
     let row = get_payment(&pool, "pi_track").await.unwrap();
     // Status stays succeeded (anomaly doesn't change status)
@@ -246,11 +246,11 @@ async fn anomaly_updates_tracking_fields() {
 async fn equal_timestamp_falls_through_to_state_machine() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_eq_ts", "evt_eq1", PaymentStatus::Pending, 1000);
-    process_payment_event(&pool, &p1).await.unwrap();
+    process_payment_event(&pool, &p1, "test").await.unwrap();
 
     // Same timestamp, valid transition — should succeed (strict < semantics)
     let p2 = make_payment("pi_eq_ts", "evt_eq2", PaymentStatus::Succeeded, 1000);
-    let result = process_payment_event(&pool, &p2).await.unwrap();
+    let result = process_payment_event(&pool, &p2, "test").await.unwrap();
     assert!(matches!(result, ProcessResult::Updated(_)));
 
     let row = get_payment(&pool, "pi_eq_ts").await.unwrap();
@@ -264,11 +264,11 @@ async fn full_lifecycle_pending_succeeded() {
     let pool = setup_pool("fin_sync_test_payment").await;
 
     let p1 = make_payment("pi_lc_s", "evt_lcs1", PaymentStatus::Pending, 1000);
-    let r1 = process_payment_event(&pool, &p1).await.unwrap();
+    let r1 = process_payment_event(&pool, &p1, "test").await.unwrap();
     assert!(matches!(r1, ProcessResult::Created(_)));
 
     let p2 = make_payment("pi_lc_s", "evt_lcs2", PaymentStatus::Succeeded, 2000);
-    let r2 = process_payment_event(&pool, &p2).await.unwrap();
+    let r2 = process_payment_event(&pool, &p2, "test").await.unwrap();
     assert!(matches!(r2, ProcessResult::Updated(_)));
 
     let row = get_payment(&pool, "pi_lc_s").await.unwrap();
@@ -289,11 +289,11 @@ async fn full_lifecycle_pending_failed() {
     let pool = setup_pool("fin_sync_test_payment").await;
 
     let p1 = make_payment("pi_lc_f", "evt_lcf1", PaymentStatus::Pending, 1000);
-    let r1 = process_payment_event(&pool, &p1).await.unwrap();
+    let r1 = process_payment_event(&pool, &p1, "test").await.unwrap();
     assert!(matches!(r1, ProcessResult::Created(_)));
 
     let p2 = make_payment("pi_lc_f", "evt_lcf2", PaymentStatus::Failed, 2000);
-    let r2 = process_payment_event(&pool, &p2).await.unwrap();
+    let r2 = process_payment_event(&pool, &p2, "test").await.unwrap();
     assert!(matches!(r2, ProcessResult::Updated(_)));
 
     let row = get_payment(&pool, "pi_lc_f").await.unwrap();
@@ -319,7 +319,7 @@ async fn refund_stores_parent_external_id() {
         1000,
         "pi_parent_123",
     );
-    process_payment_event(&pool, &r).await.unwrap();
+    process_payment_event(&pool, &r, "test").await.unwrap();
 
     let row = get_payment(&pool, "re_parent").await.unwrap();
     assert_eq!(row.parent_external_id.as_deref(), Some("pi_parent_123"));

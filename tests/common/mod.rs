@@ -87,15 +87,15 @@ pub fn make_payment(
     provider_ts: i64,
 ) -> NewPayment {
     NewPayment::new(NewPaymentParams {
-        external_id: ExternalId::new(external_id),
+        external_id: ExternalId::new(external_id).unwrap(),
         source: "stripe".to_string(),
         event_type: format!("payment_intent.{}", status.as_str()),
         direction: PaymentDirection::Inbound,
-        money: Money::new(MoneyAmount::new(5000), Currency::Usd),
+        money: Money::new(MoneyAmount::new(5000).unwrap(), Currency::Usd),
         status,
         metadata: serde_json::json!({}),
         raw_event: serde_json::json!({"id": event_id}),
-        last_event_id: EventId::new(event_id),
+        last_event_id: EventId::new(event_id).unwrap(),
         parent_external_id: None,
         provider_ts,
     })
@@ -110,16 +110,16 @@ pub fn make_refund(
     parent_external_id: &str,
 ) -> NewPayment {
     NewPayment::new(NewPaymentParams {
-        external_id: ExternalId::new(external_id),
+        external_id: ExternalId::new(external_id).unwrap(),
         source: "stripe".to_string(),
         event_type: format!("charge.refund.{}", status.as_str()),
         direction: PaymentDirection::Outbound,
-        money: Money::new(MoneyAmount::new(5000), Currency::Usd),
+        money: Money::new(MoneyAmount::new(5000).unwrap(), Currency::Usd),
         status,
         metadata: serde_json::json!({}),
         raw_event: serde_json::json!({"id": event_id}),
-        last_event_id: EventId::new(event_id),
-        parent_external_id: Some(ExternalId::new(parent_external_id)),
+        last_event_id: EventId::new(event_id).unwrap(),
+        parent_external_id: Some(ExternalId::new(parent_external_id).unwrap()),
         provider_ts,
     })
 }

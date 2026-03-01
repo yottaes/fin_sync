@@ -1,16 +1,17 @@
 use {
     crate::{
         AppState,
-        adapters::api_errors::ApiError,
+        adapters::api::errors::ApiError,
         domain::{
             error::PipelineError,
             id::{EventId, ExternalId},
             money::{Currency, Money, MoneyAmount},
-            payment::{NewPayment, NewPaymentParams, PaymentDirection, PaymentStatus},
+            payment::{
+                NewPayment, NewPaymentParams, PassthroughEvent, PaymentDirection, PaymentStatus,
+                ProcessResult,
+            },
         },
-        infra::postgres::payment_repo::{
-            ProcessResult, log_passthrough_event, process_payment_event,
-        },
+        services::payment_pipeline::{handle_passthrough, process_payment_event},
     },
     axum::{Json, extract::State, http::HeaderMap},
 };
@@ -31,7 +32,7 @@ fn convert_amount(amount: i64) -> Result<MoneyAmount, PipelineError> {
     if amount < 0 {
         return Err(PipelineError::Validation("negative amount".into()));
     }
-    Ok(MoneyAmount::new(amount))
+    MoneyAmount::new(amount)
 }
 
 fn convert_pi_status(status: stripe::PaymentIntentStatus) -> PaymentStatus {
@@ -72,7 +73,7 @@ fn payment_from_pi(
     let metadata = serde_json::to_value(&pi.metadata)?;
 
     Ok(NewPayment::new(NewPaymentParams {
-        external_id: ExternalId::new(pi.id.to_string()),
+        external_id: ExternalId::new(pi.id.to_string())?,
         source: "stripe".into(),
         event_type: event_type.into(),
         direction: PaymentDirection::Inbound,
@@ -80,7 +81,7 @@ fn payment_from_pi(
         status,
         metadata,
         raw_event,
-        last_event_id: EventId::new(event_id),
+        last_event_id: EventId::new(event_id)?,
         parent_external_id: None,
         provider_ts: stripe_created,
     }))
@@ -103,15 +104,19 @@ fn payment_from_refund(
         .transpose()?
         .unwrap_or(serde_json::Value::Null);
 
-    let parent_pi_id = refund.payment_intent.as_ref().map(|e| {
-        ExternalId::new(match e {
-            stripe::Expandable::Id(id) => id.to_string(),
-            stripe::Expandable::Object(pi) => pi.id.to_string(),
+    let parent_pi_id = refund
+        .payment_intent
+        .as_ref()
+        .map(|e| {
+            ExternalId::new(match e {
+                stripe::Expandable::Id(id) => id.to_string(),
+                stripe::Expandable::Object(pi) => pi.id.to_string(),
+            })
         })
-    });
+        .transpose()?;
 
     Ok(NewPayment::new(NewPaymentParams {
-        external_id: ExternalId::new(refund.id.to_string()),
+        external_id: ExternalId::new(refund.id.to_string())?,
         source: "stripe".into(),
         event_type: event_type.into(),
         direction: PaymentDirection::Outbound,
@@ -119,7 +124,7 @@ fn payment_from_refund(
         status,
         metadata,
         raw_event,
-        last_event_id: EventId::new(event_id),
+        last_event_id: EventId::new(event_id)?,
         parent_external_id: parent_pi_id,
         provider_ts: stripe_created,
     }))
@@ -183,36 +188,36 @@ pub async fn stripe_webhook_handler(
                 stripe::Expandable::Id(id) => id.to_string(),
                 stripe::Expandable::Object(pi) => pi.id.to_string(),
             });
-            let is_new = log_passthrough_event(
-                &state.pool,
-                pi_id.as_deref(),
-                &event_id,
-                &event_type,
-                stripe_created,
-                &raw_event,
-            )
-            .await?;
+            let passthrough = PassthroughEvent {
+                external_id: pi_id,
+                event_id: event_id.clone(),
+                event_type: event_type.clone(),
+                provider_ts: stripe_created,
+                raw_payload: raw_event,
+                actor: "webhook:stripe".into(),
+            };
+            let is_new = handle_passthrough(&state.pool, &passthrough).await?;
             let status = if is_new { "logged" } else { "duplicate" };
             tracing::info!(event_type = %event_type, status, "charge event");
             return Ok(Json(serde_json::json!({"status": status})));
         }
         _ => {
-            let is_new = log_passthrough_event(
-                &state.pool,
-                None,
-                &event_id,
-                &event_type,
-                stripe_created,
-                &raw_event,
-            )
-            .await?;
+            let passthrough = PassthroughEvent {
+                external_id: None,
+                event_id: event_id.clone(),
+                event_type: event_type.clone(),
+                provider_ts: stripe_created,
+                raw_payload: raw_event,
+                actor: "webhook:stripe".into(),
+            };
+            let is_new = handle_passthrough(&state.pool, &passthrough).await?;
             let status = if is_new { "logged" } else { "duplicate" };
             tracing::info!(event_type = %event_type, status, "unsupported event");
             return Ok(Json(serde_json::json!({"status": status})));
         }
     };
 
-    match process_payment_event(&state.pool, &payment).await? {
+    match process_payment_event(&state.pool, &payment, "webhook:stripe").await? {
         ProcessResult::Created(id) => {
             tracing::info!(payment_id = %id, direction = ?payment.direction(), "payment created");
             Ok(Json(serde_json::json!({"status": "created"})))
