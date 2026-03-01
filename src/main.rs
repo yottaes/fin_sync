@@ -5,7 +5,7 @@ use {
         routing::{get, post},
     },
     sqlx::postgres::PgPoolOptions,
-    std::{env, time::Duration},
+    std::{env, sync::Arc, time::Duration},
     tokio::signal,
     tower_http::timeout::TimeoutLayer,
 };
@@ -18,6 +18,7 @@ async fn main() {
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let stripe_webhook_secret =
         env::var("STRIPE_WEBHOOK_SECRET").expect("STRIPE_WEBHOOK_SECRET must be set");
+    let stripe_secret_key = env::var("STRIPE_SECRET_KEY").expect("STRIPE_SECRET_KEY must be set");
 
     let pool = PgPoolOptions::new()
         .max_connections(20)
@@ -26,9 +27,14 @@ async fn main() {
         .await
         .expect("failed to connect to database");
 
+    let provider = Arc::new(fin_sync::adapters::stripe_client::StripeProvider::new(
+        &stripe_secret_key,
+    ));
+
     let state = fin_sync::AppState {
         pool,
         stripe_webhook_secret: stripe_webhook_secret.into(),
+        provider,
     };
 
     let app = Router::new()

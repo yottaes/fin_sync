@@ -1,7 +1,11 @@
 use {
     crate::domain::audit::NewAuditEntry,
     crate::domain::error::PipelineError,
-    crate::domain::payment::{NewPayment, PassthroughEvent, PaymentAction, ProcessResult},
+    crate::domain::payment::{
+        NewPayment, NewPaymentParams, PassthroughEvent, PaymentAction, ProcessResult,
+        WebhookTrigger,
+    },
+    crate::domain::provider::PaymentProvider,
     crate::infra::postgres::audit_repo::insert_audit_entry,
     crate::infra::postgres::payment_repo,
     sqlx::PgPool,
@@ -114,6 +118,49 @@ pub async fn process_payment_event(
                     Ok(ProcessResult::Updated(id))
                 }
             }
+        }
+    }
+}
+
+/// Top-level orchestrator: webhook delivers a trigger, we fetch current state
+/// from the provider API, then run the pipeline.
+pub async fn process_webhook(
+    pool: &PgPool,
+    provider: &dyn PaymentProvider,
+    trigger: WebhookTrigger,
+    actor: &str,
+) -> Result<ProcessResult, PipelineError> {
+    match trigger {
+        WebhookTrigger::Passthrough(event) => {
+            let is_new = handle_passthrough(pool, &event).await?;
+            if is_new {
+                Ok(ProcessResult::Created(Uuid::nil()))
+            } else {
+                Ok(ProcessResult::Duplicate)
+            }
+        }
+        WebhookTrigger::Payment {
+            event_id,
+            event_type,
+            external_id,
+            raw_event,
+            provider_ts,
+        } => {
+            let fetched = provider.fetch_payment(&external_id).await?;
+            let payment = NewPayment::new(NewPaymentParams {
+                external_id: fetched.external_id,
+                source: "stripe".into(),
+                event_type,
+                direction: fetched.direction,
+                money: fetched.money,
+                status: fetched.status,
+                metadata: fetched.metadata,
+                raw_event,
+                last_event_id: event_id,
+                parent_external_id: fetched.parent_external_id,
+                provider_ts,
+            });
+            process_payment_event(pool, &payment, actor).await
         }
     }
 }

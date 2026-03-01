@@ -54,6 +54,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:password@localhost:5432/postgres
       STRIPE_WEBHOOK_SECRET: whsec_test_dummy
+      STRIPE_SECRET_KEY: sk_test_dummy
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

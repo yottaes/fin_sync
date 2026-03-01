@@ -60,6 +60,23 @@ impl ExistingPayment {
     }
 }
 
+// ── Webhook trigger ──────────────────────────────────────────────────────────
+
+/// Signal extracted from a webhook event. The handler builds this; the service
+/// layer decides what to do (fetch from provider API or just log).
+pub enum WebhookTrigger {
+    /// PI or Refund — fetch current state from provider API.
+    Payment {
+        event_id: EventId,
+        event_type: String,
+        external_id: ExternalId,
+        raw_event: serde_json::Value,
+        provider_ts: i64,
+    },
+    /// Charge / unknown — log only.
+    Passthrough(PassthroughEvent),
+}
+
 // ── Passthrough event ────────────────────────────────────────────────────────
 
 /// Event that we log but don't process as a payment (charges, unknown types).
