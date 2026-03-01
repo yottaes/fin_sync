@@ -32,6 +32,9 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ github.token }}
+          # rsa (RUSTSEC-2023-0071): transitive via sqlx-mysql, unused — we only use postgres.
+          # sqlx-macros-core unconditionally depends on sqlx-mysql in 0.8; no fix available.
+          ignore: RUSTSEC-2023-0071
 
   test:
     name: Test
