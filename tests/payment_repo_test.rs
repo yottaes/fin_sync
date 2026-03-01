@@ -134,40 +134,40 @@ async fn same_status_returns_stale() {
     assert_eq!(count, 1); // only the "created" entry
 }
 
-// ── 9. older_timestamp_returns_stale ───────────────────────────────────────
+// ── 9. older_timestamp_valid_transition_still_advances ─────────────────────
 
 #[tokio::test]
-async fn older_timestamp_returns_stale() {
+async fn older_timestamp_valid_transition_still_advances() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_old", "evt_old1", PaymentStatus::Pending, 2000);
     process_payment_event(&pool, &p1, "test").await.unwrap();
 
-    // Older timestamp with different status
+    // Older timestamp but valid transition — API is source of truth, not timestamps
     let p2 = make_payment("pi_old", "evt_old2", PaymentStatus::Succeeded, 1000);
     let result = process_payment_event(&pool, &p2, "test").await.unwrap();
-    assert!(matches!(result, ProcessResult::Stale(_)));
+    assert!(matches!(result, ProcessResult::Updated(_)));
 
     let row = get_payment(&pool, "pi_old").await.unwrap();
-    assert_eq!(row.status, "pending"); // not updated
+    assert_eq!(row.status, "succeeded");
 }
 
-// ── 10. stale_event_writes_audit ───────────────────────────────────────────
+// ── 10. older_timestamp_valid_transition_writes_audit ──────────────────────
 
 #[tokio::test]
-async fn stale_event_writes_audit() {
+async fn older_timestamp_valid_transition_writes_audit() {
     let pool = setup_pool("fin_sync_test_payment").await;
     let p1 = make_payment("pi_stale_a", "evt_sa1", PaymentStatus::Pending, 2000);
     process_payment_event(&pool, &p1, "test").await.unwrap();
 
+    // Valid transition regardless of timestamp — API is source of truth
     let p2 = make_payment("pi_stale_a", "evt_sa2", PaymentStatus::Succeeded, 1000);
     process_payment_event(&pool, &p2, "test").await.unwrap();
 
     let audits = get_audit_entries(&pool, "pi_stale_a").await;
-    assert_eq!(audits.len(), 2); // "created" + "event_received" (stale)
-    assert_eq!(audits[1].action, "event_received");
-    assert_eq!(audits[1].detail["stale"], true);
-    assert_eq!(audits[1].detail["current_status"], "pending");
-    assert_eq!(audits[1].detail["incoming_status"], "succeeded");
+    assert_eq!(audits.len(), 2); // "created" + "status_changed"
+    assert_eq!(audits[1].action, "status_changed");
+    assert_eq!(audits[1].detail["old_status"], "pending");
+    assert_eq!(audits[1].detail["new_status"], "succeeded");
 }
 
 // ── 11. invalid_transition_succeeded_to_pending ────────────────────────────

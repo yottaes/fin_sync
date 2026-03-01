@@ -38,7 +38,7 @@ pub async fn get_existing_payment(
     external_id: &str,
 ) -> Result<Option<ExistingPayment>, PipelineError> {
     let row = sqlx::query!(
-        "SELECT id, status, last_provider_ts FROM payments WHERE external_id = $1",
+        "SELECT id, status FROM payments WHERE external_id = $1",
         external_id,
     )
     .fetch_optional(&mut **tx)
@@ -48,11 +48,7 @@ pub async fn get_existing_payment(
         None => Ok(None),
         Some(r) => {
             let status = PaymentStatus::try_from(r.status.as_str())?;
-            Ok(Some(ExistingPayment {
-                id: r.id,
-                status,
-                last_provider_ts: r.last_provider_ts,
-            }))
+            Ok(Some(ExistingPayment { id: r.id, status }))
         }
     }
 }
@@ -125,22 +121,6 @@ pub async fn update_payment_status(
         payment.metadata(),
         payment.last_event_id(),
         payment.provider_ts(),
-        id,
-    )
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
-}
-
-/// Update only event tracking (temporal stale — incoming ts is older, don't touch last_provider_ts).
-pub async fn touch_event(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    id: Uuid,
-    event_id: &str,
-) -> Result<(), PipelineError> {
-    sqlx::query!(
-        "UPDATE payments SET last_event_id = $1, updated_at = now() WHERE id = $2",
-        event_id,
         id,
     )
     .execute(&mut **tx)

@@ -22,6 +22,8 @@ pub enum ProcessResult {
     Duplicate,
     /// Transition is not valid per state machine — logged as anomaly.
     Anomaly(Uuid),
+    /// Passthrough event (charge, unknown) — audit-logged only, no payment row.
+    Logged,
 }
 
 // ── Existing payment (read model for decisions) ──────────────────────────────
@@ -30,7 +32,6 @@ pub enum ProcessResult {
 pub struct ExistingPayment {
     pub id: Uuid,
     pub status: PaymentStatus,
-    pub last_provider_ts: i64,
 }
 
 // ── Decision types ───────────────────────────────────────────────────────────
@@ -38,7 +39,6 @@ pub struct ExistingPayment {
 pub enum PaymentAction {
     Advance { old_status: PaymentStatus },
     SameStatus,
-    TemporalStale,
     LogAnomaly { current: PaymentStatus },
 }
 
@@ -49,8 +49,6 @@ impl ExistingPayment {
     pub fn decide(&self, incoming: &NewPayment) -> PaymentAction {
         if *incoming.status() == self.status {
             PaymentAction::SameStatus
-        } else if incoming.provider_ts() < self.last_provider_ts {
-            PaymentAction::TemporalStale
         } else if !self.status.can_transition_to(incoming.status()) {
             PaymentAction::LogAnomaly {
                 current: self.status.clone(),
@@ -61,6 +59,23 @@ impl ExistingPayment {
             }
         }
     }
+}
+
+// ── Webhook trigger ──────────────────────────────────────────────────────────
+
+/// Signal extracted from a webhook event. The handler builds this; the service
+/// layer decides what to do (fetch from provider API or just log).
+pub enum WebhookTrigger {
+    /// PI or Refund — fetch current state from provider API.
+    Payment {
+        event_id: EventId,
+        event_type: String,
+        external_id: ExternalId,
+        raw_event: serde_json::Value,
+        provider_ts: i64,
+    },
+    /// Charge / unknown — log only.
+    Passthrough(PassthroughEvent),
 }
 
 // ── Passthrough event ────────────────────────────────────────────────────────

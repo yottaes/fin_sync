@@ -48,6 +48,14 @@ impl IntoResponse for ApiError {
                     "internal error".to_string(),
                 )
             }
+            PipelineError::Provider(err) => {
+                tracing::error!("provider error: {err}");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "provider_error",
+                    "internal error".to_string(),
+                )
+            }
         };
 
         let body = serde_json::json!({

@@ -13,4 +13,7 @@ pub enum PipelineError {
 
     #[error("webhook signature: {0}")]
     WebhookSignature(String),
+
+    #[error("provider: {0}")]
+    Provider(String),
 }
