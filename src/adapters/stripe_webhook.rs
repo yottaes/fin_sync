@@ -1,7 +1,6 @@
 use {
     crate::{
         AppState,
-        adapters::api::errors::ApiError,
         domain::{
             error::PipelineError,
             id::{EventId, ExternalId},
@@ -12,6 +11,7 @@ use {
             },
         },
         services::payment_pipeline::{handle_passthrough, process_payment_event},
+        transport::http::errors::ApiError,
     },
     axum::{Json, extract::State, http::HeaderMap},
 };
@@ -135,7 +135,7 @@ fn payment_from_refund(
     skip_all,
     fields(event_id = tracing::field::Empty, event_type = tracing::field::Empty)
 )]
-pub async fn stripe_webhook_handler(
+pub async fn wh_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: String,
@@ -184,13 +184,17 @@ pub async fn stripe_webhook_handler(
             }
         }
         stripe::EventObject::Charge(ref charge) => {
-            let pi_id = charge.payment_intent.as_ref().map(|e| match e {
-                stripe::Expandable::Id(id) => id.to_string(),
-                stripe::Expandable::Object(pi) => pi.id.to_string(),
-            });
+            let pi_id = charge
+                .payment_intent
+                .as_ref()
+                .map(|e| match e {
+                    stripe::Expandable::Id(id) => ExternalId::new(id.to_string()),
+                    stripe::Expandable::Object(pi) => ExternalId::new(pi.id.to_string()),
+                })
+                .transpose()?;
             let passthrough = PassthroughEvent {
                 external_id: pi_id,
-                event_id: event_id.clone(),
+                event_id: EventId::new(event_id.clone())?,
                 event_type: event_type.clone(),
                 provider_ts: stripe_created,
                 raw_payload: raw_event,
@@ -204,7 +208,7 @@ pub async fn stripe_webhook_handler(
         _ => {
             let passthrough = PassthroughEvent {
                 external_id: None,
-                event_id: event_id.clone(),
+                event_id: EventId::new(event_id.clone())?,
                 event_type: event_type.clone(),
                 provider_ts: stripe_created,
                 raw_payload: raw_event,

@@ -75,7 +75,7 @@ pub async fn process_payment_event(
                     let mut audit = payment.audit_entry(actor, "event_received");
                     audit.detail = serde_json::json!({
                         "event_type": payment.event_type(),
-                        "current_status": audit.detail.get("status").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                        "current_status": existing.status.as_str(),
                         "incoming_status": payment.status().as_str(),
                         "stale": true,
                     });
@@ -140,10 +140,14 @@ pub async fn handle_passthrough(
 ) -> Result<bool, PipelineError> {
     let mut tx = pool.begin().await?;
 
-    let object_id = event.external_id.as_deref().unwrap_or("");
+    let object_id = event
+        .external_id
+        .as_ref()
+        .map(|id| id.as_str())
+        .unwrap_or("");
     let is_new = payment_repo::insert_provider_event(
         &mut tx,
-        &event.event_id,
+        event.event_id.as_str(),
         object_id,
         &event.event_type,
         event.provider_ts,
@@ -157,7 +161,7 @@ pub async fn handle_passthrough(
     }
 
     let entity_id = match &event.external_id {
-        Some(eid) => payment_repo::find_payment_id(&mut tx, eid).await?,
+        Some(eid) => payment_repo::find_payment_id(&mut tx, eid.as_str()).await?,
         None => None,
     };
 
@@ -165,8 +169,8 @@ pub async fn handle_passthrough(
         id: Uuid::now_v7(),
         entity_type: "payment".to_string(),
         entity_id,
-        external_id: event.external_id.clone(),
-        event_id: event.event_id.clone(),
+        external_id: event.external_id.as_ref().map(|id| id.as_str().to_string()),
+        event_id: event.event_id.as_str().to_string(),
         action: "event_received".to_string(),
         actor: event.actor.clone(),
         detail: serde_json::json!({

@@ -27,7 +27,10 @@ impl MoneyAmount {
     }
 
     pub fn checked_sub(self, other: MoneyAmount) -> Option<MoneyAmount> {
-        self.0.checked_sub(other.0).map(MoneyAmount)
+        self.0
+            .checked_sub(other.0)
+            .filter(|&v| v >= 0)
+            .map(MoneyAmount)
     }
 }
 

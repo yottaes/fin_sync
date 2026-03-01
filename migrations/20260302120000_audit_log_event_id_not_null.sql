@@ -1,0 +1,1 @@
+ALTER TABLE audit_log ALTER COLUMN event_id SET NOT NULL;

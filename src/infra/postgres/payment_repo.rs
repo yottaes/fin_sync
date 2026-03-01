@@ -105,6 +105,9 @@ pub async fn insert_payment(
 }
 
 /// Advance payment status + tracking fields (for valid transitions).
+// NOTE: raw_event is intentionally NOT updated here.
+// It preserves the creation snapshot; latest event payload
+// is always available in provider_events by last_event_id.
 pub async fn update_payment_status(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     id: Uuid,

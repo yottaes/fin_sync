@@ -67,8 +67,8 @@ impl ExistingPayment {
 
 /// Event that we log but don't process as a payment (charges, unknown types).
 pub struct PassthroughEvent {
-    pub external_id: Option<String>,
-    pub event_id: String,
+    pub external_id: Option<ExternalId>,
+    pub event_id: EventId,
     pub event_type: String,
     pub provider_ts: i64,
     pub raw_payload: serde_json::Value,

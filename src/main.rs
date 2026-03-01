@@ -7,6 +7,7 @@ use {
     sqlx::postgres::PgPoolOptions,
     std::{env, time::Duration},
     tokio::signal,
+    tower_http::timeout::TimeoutLayer,
 };
 
 #[tokio::main]
@@ -34,9 +35,13 @@ async fn main() {
         .route("/", get(|| async { "ok" }))
         .route(
             "/webhook",
-            post(fin_sync::adapters::stripe::stripe_webhook_handler),
+            post(fin_sync::adapters::stripe_webhook::wh_handler),
         )
         .layer(DefaultBodyLimit::max(64 * 1024)) // 64 KB — Stripe events are typically <20 KB
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(30),
+        ))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();

@@ -19,11 +19,14 @@ impl From<PipelineError> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, error_code, message) = match &self.0 {
-            PipelineError::Validation(msg) => (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "validation_error",
-                msg.clone(),
-            ),
+            PipelineError::Validation(msg) => {
+                tracing::warn!("validation error: {msg}");
+                (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation_error",
+                    "request could not be processed".to_string(),
+                )
+            }
             PipelineError::WebhookSignature(_) => (
                 StatusCode::BAD_REQUEST,
                 "webhook_error",

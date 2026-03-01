@@ -1,6 +1,7 @@
 mod common;
 
 use common::*;
+use fin_sync::domain::id::{EventId, ExternalId};
 use fin_sync::domain::payment::{PassthroughEvent, PaymentStatus, ProcessResult};
 use fin_sync::services::payment_pipeline::{handle_passthrough, process_payment_event};
 
@@ -87,8 +88,8 @@ async fn concurrent_passthrough_dedup() {
         let pool = pool.clone();
         handles.push(tokio::spawn(async move {
             let event = PassthroughEvent {
-                external_id: Some("pi_cpt".into()),
-                event_id: "evt_cpt_same".into(),
+                external_id: Some(ExternalId::new("pi_cpt").unwrap()),
+                event_id: EventId::new("evt_cpt_same").unwrap(),
                 event_type: "charge.created".into(),
                 provider_ts: 1000,
                 raw_payload: serde_json::json!({"type": "charge.created"}),
