@@ -71,21 +71,6 @@ pub async fn process_payment_event(
                     tx.commit().await?;
                     Ok(ProcessResult::Stale(id))
                 }
-                PaymentAction::TemporalStale => {
-                    let mut audit = payment.audit_entry(actor, "event_received");
-                    audit.detail = serde_json::json!({
-                        "event_type": payment.event_type(),
-                        "current_status": existing.status.as_str(),
-                        "incoming_status": payment.status().as_str(),
-                        "stale": true,
-                    });
-                    audit.entity_id = Some(id);
-                    insert_audit_entry(&mut tx, &audit).await?;
-
-                    payment_repo::touch_event(&mut tx, id, payment.last_event_id()).await?;
-                    tx.commit().await?;
-                    Ok(ProcessResult::Stale(id))
-                }
                 PaymentAction::LogAnomaly { current } => {
                     let mut audit = payment.audit_entry(actor, "event_received");
                     audit.detail = serde_json::json!({

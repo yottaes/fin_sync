@@ -38,7 +38,6 @@ pub struct ExistingPayment {
 pub enum PaymentAction {
     Advance { old_status: PaymentStatus },
     SameStatus,
-    TemporalStale,
     LogAnomaly { current: PaymentStatus },
 }
 
@@ -49,8 +48,6 @@ impl ExistingPayment {
     pub fn decide(&self, incoming: &NewPayment) -> PaymentAction {
         if *incoming.status() == self.status {
             PaymentAction::SameStatus
-        } else if incoming.provider_ts() < self.last_provider_ts {
-            PaymentAction::TemporalStale
         } else if !self.status.can_transition_to(incoming.status()) {
             PaymentAction::LogAnomaly {
                 current: self.status.clone(),
