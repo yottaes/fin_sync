@@ -1,7 +1,6 @@
 use {
     crate::{
         AppState,
-        transport::http::errors::ApiError,
         domain::{
             error::PipelineError,
             id::{EventId, ExternalId},
@@ -12,6 +11,7 @@ use {
             },
         },
         services::payment_pipeline::{handle_passthrough, process_payment_event},
+        transport::http::errors::ApiError,
     },
     axum::{Json, extract::State, http::HeaderMap},
 };
