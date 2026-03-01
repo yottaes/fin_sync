@@ -75,7 +75,7 @@ pub async fn process_payment_event(
                     let mut audit = payment.audit_entry(actor, "event_received");
                     audit.detail = serde_json::json!({
                         "event_type": payment.event_type(),
-                        "current_status": audit.detail.get("status").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                        "current_status": existing.status.as_str(),
                         "incoming_status": payment.status().as_str(),
                         "stale": true,
                     });

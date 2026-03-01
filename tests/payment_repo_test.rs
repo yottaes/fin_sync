@@ -166,6 +166,8 @@ async fn stale_event_writes_audit() {
     assert_eq!(audits.len(), 2); // "created" + "event_received" (stale)
     assert_eq!(audits[1].action, "event_received");
     assert_eq!(audits[1].detail["stale"], true);
+    assert_eq!(audits[1].detail["current_status"], "pending");
+    assert_eq!(audits[1].detail["incoming_status"], "succeeded");
 }
 
 // ── 11. invalid_transition_succeeded_to_pending ────────────────────────────
