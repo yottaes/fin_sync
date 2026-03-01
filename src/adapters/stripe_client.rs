@@ -54,7 +54,6 @@ impl StripeProvider {
                 money: Money::new(amount, currency),
                 metadata,
                 parent_external_id: None,
-                created: pi.created,
             })
         } else if raw.starts_with("re_") {
             let refund_id = raw
@@ -92,7 +91,6 @@ impl StripeProvider {
                 money: Money::new(amount, currency),
                 metadata,
                 parent_external_id: parent_pi_id,
-                created: refund.created,
             })
         } else {
             Err(PipelineError::Provider(format!(
@@ -104,7 +102,7 @@ impl StripeProvider {
 
 // ── Conversion helpers (moved from stripe_webhook.rs) ───────────────────────
 
-pub fn convert_currency(c: stripe::Currency) -> Result<Currency, PipelineError> {
+fn convert_currency(c: stripe::Currency) -> Result<Currency, PipelineError> {
     match c {
         stripe::Currency::USD => Ok(Currency::Usd),
         stripe::Currency::EUR => Ok(Currency::Eur),
@@ -116,14 +114,14 @@ pub fn convert_currency(c: stripe::Currency) -> Result<Currency, PipelineError> 
     }
 }
 
-pub fn convert_amount(amount: i64) -> Result<MoneyAmount, PipelineError> {
+fn convert_amount(amount: i64) -> Result<MoneyAmount, PipelineError> {
     if amount < 0 {
         return Err(PipelineError::Validation("negative amount".into()));
     }
     MoneyAmount::new(amount)
 }
 
-pub fn convert_pi_status(status: stripe::PaymentIntentStatus) -> PaymentStatus {
+fn convert_pi_status(status: stripe::PaymentIntentStatus) -> PaymentStatus {
     #[allow(unreachable_patterns)]
     match status {
         stripe::PaymentIntentStatus::Succeeded => PaymentStatus::Succeeded,
@@ -140,7 +138,7 @@ pub fn convert_pi_status(status: stripe::PaymentIntentStatus) -> PaymentStatus {
     }
 }
 
-pub fn convert_refund_status(status: Option<&str>) -> PaymentStatus {
+fn convert_refund_status(status: Option<&str>) -> PaymentStatus {
     match status {
         Some("succeeded") => PaymentStatus::Refunded,
         Some("failed") | Some("canceled") => PaymentStatus::Failed,

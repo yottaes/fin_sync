@@ -127,5 +127,9 @@ pub async fn wh_handler(
             tracing::warn!(payment_id = %id, event_type = %event_type, "anomalous transition, logged");
             Ok(Json(serde_json::json!({"status": "anomaly"})))
         }
+        ProcessResult::Logged => {
+            tracing::info!(event_type = %event_type, "passthrough event logged");
+            Ok(Json(serde_json::json!({"status": "logged"})))
+        }
     }
 }

@@ -14,7 +14,6 @@ pub struct FetchedPayment {
     pub money: Money,
     pub metadata: serde_json::Value,
     pub parent_external_id: Option<ExternalId>,
-    pub created: i64,
 }
 
 pub trait PaymentProvider: Send + Sync {

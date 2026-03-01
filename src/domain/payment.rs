@@ -22,6 +22,8 @@ pub enum ProcessResult {
     Duplicate,
     /// Transition is not valid per state machine — logged as anomaly.
     Anomaly(Uuid),
+    /// Passthrough event (charge, unknown) — audit-logged only, no payment row.
+    Logged,
 }
 
 // ── Existing payment (read model for decisions) ──────────────────────────────
@@ -30,7 +32,6 @@ pub enum ProcessResult {
 pub struct ExistingPayment {
     pub id: Uuid,
     pub status: PaymentStatus,
-    pub last_provider_ts: i64,
 }
 
 // ── Decision types ───────────────────────────────────────────────────────────

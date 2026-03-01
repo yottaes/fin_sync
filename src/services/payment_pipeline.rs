@@ -134,7 +134,7 @@ pub async fn process_webhook(
         WebhookTrigger::Passthrough(event) => {
             let is_new = handle_passthrough(pool, &event).await?;
             if is_new {
-                Ok(ProcessResult::Created(Uuid::nil()))
+                Ok(ProcessResult::Logged)
             } else {
                 Ok(ProcessResult::Duplicate)
             }
