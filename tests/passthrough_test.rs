@@ -1,6 +1,7 @@
 mod common;
 
 use common::*;
+use fin_sync::domain::id::{EventId, ExternalId};
 use fin_sync::domain::payment::{PassthroughEvent, PaymentStatus};
 use fin_sync::services::payment_pipeline::{handle_passthrough, process_payment_event};
 
@@ -11,8 +12,8 @@ async fn passthrough_logs_event() {
     let pool = setup_pool("fin_sync_test_passthrough").await;
 
     let event = PassthroughEvent {
-        external_id: Some("pi_pt_1".into()),
-        event_id: "evt_pt_1".into(),
+        external_id: Some(ExternalId::new("pi_pt_1").unwrap()),
+        event_id: EventId::new("evt_pt_1").unwrap(),
         event_type: "charge.created".into(),
         provider_ts: 1000,
         raw_payload: serde_json::json!({"type": "charge.created"}),
@@ -36,8 +37,8 @@ async fn passthrough_duplicate_returns_false() {
     let pool = setup_pool("fin_sync_test_passthrough").await;
 
     let event = PassthroughEvent {
-        external_id: Some("pi_ptd".into()),
-        event_id: "evt_ptd_1".into(),
+        external_id: Some(ExternalId::new("pi_ptd").unwrap()),
+        event_id: EventId::new("evt_ptd_1").unwrap(),
         event_type: "charge.created".into(),
         provider_ts: 1000,
         raw_payload: serde_json::json!({"type": "charge.created"}),
@@ -69,8 +70,8 @@ async fn passthrough_links_existing_payment() {
 
     // Now log a passthrough event referencing the same external_id
     let event = PassthroughEvent {
-        external_id: Some("pi_ptlink".into()),
-        event_id: "evt_ptlink_pt".into(),
+        external_id: Some(ExternalId::new("pi_ptlink").unwrap()),
+        event_id: EventId::new("evt_ptlink_pt").unwrap(),
         event_type: "charge.succeeded".into(),
         provider_ts: 2000,
         raw_payload: serde_json::json!({"type": "charge.succeeded"}),
@@ -98,8 +99,8 @@ async fn passthrough_no_existing_payment() {
     let pool = setup_pool("fin_sync_test_passthrough").await;
 
     let event = PassthroughEvent {
-        external_id: Some("pi_nonexistent".into()),
-        event_id: "evt_ptnone".into(),
+        external_id: Some(ExternalId::new("pi_nonexistent").unwrap()),
+        event_id: EventId::new("evt_ptnone").unwrap(),
         event_type: "charge.created".into(),
         provider_ts: 1000,
         raw_payload: serde_json::json!({"type": "charge.created"}),
@@ -126,7 +127,7 @@ async fn passthrough_with_none_external_id() {
 
     let event = PassthroughEvent {
         external_id: None,
-        event_id: "evt_ptnull".into(),
+        event_id: EventId::new("evt_ptnull").unwrap(),
         event_type: "unknown.event".into(),
         provider_ts: 1000,
         raw_payload: serde_json::json!({"type": "unknown.event"}),
