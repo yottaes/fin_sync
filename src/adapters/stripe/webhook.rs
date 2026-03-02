@@ -4,9 +4,10 @@ use {
         domain::{
             error::PipelineError,
             id::{EventId, ExternalId},
-            payment::{PassthroughEvent, ProcessResult, WebhookTrigger},
+            payment::{PassthroughEvent, WebhookTrigger},
         },
-        services::payment_pipeline::process_webhook,
+        infra::postgres::job_repo,
+        services::payment_pipeline::handle_passthrough,
         transport::http::errors::ApiError,
     },
     axum::{Json, extract::State, http::HeaderMap},
@@ -106,30 +107,41 @@ pub async fn wh_handler(
         }),
     };
 
-    match process_webhook(&state.pool, &*state.provider, trigger, "webhook:stripe").await? {
-        ProcessResult::Created(id) => {
-            tracing::info!(payment_id = %id, "payment created");
-            Ok(Json(serde_json::json!({"status": "created"})))
+    match trigger {
+        WebhookTrigger::Payment {
+            event_id: eid,
+            event_type: etype,
+            external_id: ext_id,
+            raw_event: raw,
+            provider_ts,
+        } => {
+            let inserted = job_repo::enqueue(
+                &state.pool,
+                eid.as_str(),
+                ext_id.as_str(),
+                &etype,
+                provider_ts,
+                &raw,
+            )
+            .await?;
+
+            if inserted {
+                tracing::info!("payment event enqueued for async processing");
+                Ok(Json(serde_json::json!({"status": "accepted"})))
+            } else {
+                tracing::info!("duplicate event, already enqueued");
+                Ok(Json(serde_json::json!({"status": "duplicate"})))
+            }
         }
-        ProcessResult::Updated(id) => {
-            tracing::info!(payment_id = %id, "payment updated");
-            Ok(Json(serde_json::json!({"status": "updated"})))
-        }
-        ProcessResult::Stale(id) => {
-            tracing::info!(payment_id = %id, event_type = %event_type, "stale event, skipped");
-            Ok(Json(serde_json::json!({"status": "skipped"})))
-        }
-        ProcessResult::Duplicate => {
-            tracing::info!(event_id = %event_id, "duplicate event, already processed");
-            Ok(Json(serde_json::json!({"status": "duplicate"})))
-        }
-        ProcessResult::Anomaly(id) => {
-            tracing::warn!(payment_id = %id, event_type = %event_type, "anomalous transition, logged");
-            Ok(Json(serde_json::json!({"status": "anomaly"})))
-        }
-        ProcessResult::Logged => {
-            tracing::info!(event_type = %event_type, "passthrough event logged");
-            Ok(Json(serde_json::json!({"status": "logged"})))
+        WebhookTrigger::Passthrough(event) => {
+            let is_new = handle_passthrough(&state.pool, &event).await?;
+            if is_new {
+                tracing::info!(event_type = %event_type, "passthrough event logged");
+                Ok(Json(serde_json::json!({"status": "logged"})))
+            } else {
+                tracing::info!(event_id = %event_id, "duplicate event, already processed");
+                Ok(Json(serde_json::json!({"status": "duplicate"})))
+            }
         }
     }
 }
