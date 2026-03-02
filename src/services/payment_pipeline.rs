@@ -2,8 +2,8 @@ use {
     crate::domain::audit::NewAuditEntry,
     crate::domain::error::PipelineError,
     crate::domain::payment::{
-        NewPayment, NewPaymentParams, PassthroughEvent, PaymentAction, ProcessResult,
-        WebhookTrigger,
+        NewPayment, NewPaymentParams, PassthroughEvent, PaymentAction, PaymentTrigger,
+        ProcessResult,
     },
     crate::domain::provider::PaymentProvider,
     crate::infra::postgres::audit_repo::insert_audit_entry,
@@ -27,7 +27,7 @@ pub async fn process_payment_event(
 
     // Serialize all processing for this external_id.
     sqlx::query!(
-        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
         payment.external_id()
     )
     .execute(&mut *tx)
@@ -122,47 +122,28 @@ pub async fn process_payment_event(
     }
 }
 
-/// Top-level orchestrator: webhook delivers a trigger, we fetch current state
-/// from the provider API, then run the pipeline.
-pub async fn process_webhook(
+/// Fetch current state from the provider API, then run the payment pipeline.
+pub async fn fetch_and_process_payment(
     pool: &PgPool,
     provider: &dyn PaymentProvider,
-    trigger: WebhookTrigger,
+    trigger: PaymentTrigger,
     actor: &str,
 ) -> Result<ProcessResult, PipelineError> {
-    match trigger {
-        WebhookTrigger::Passthrough(event) => {
-            let is_new = handle_passthrough(pool, &event).await?;
-            if is_new {
-                Ok(ProcessResult::Logged)
-            } else {
-                Ok(ProcessResult::Duplicate)
-            }
-        }
-        WebhookTrigger::Payment {
-            event_id,
-            event_type,
-            external_id,
-            raw_event,
-            provider_ts,
-        } => {
-            let fetched = provider.fetch_payment(&external_id).await?;
-            let payment = NewPayment::new(NewPaymentParams {
-                external_id: fetched.external_id,
-                source: "stripe".into(),
-                event_type,
-                direction: fetched.direction,
-                money: fetched.money,
-                status: fetched.status,
-                metadata: fetched.metadata,
-                raw_event,
-                last_event_id: event_id,
-                parent_external_id: fetched.parent_external_id,
-                provider_ts,
-            });
-            process_payment_event(pool, &payment, actor).await
-        }
-    }
+    let fetched = provider.fetch_payment(&trigger.external_id).await?;
+    let payment = NewPayment::new(NewPaymentParams {
+        external_id: fetched.external_id,
+        source: "stripe".into(),
+        event_type: trigger.event_type,
+        direction: fetched.direction,
+        money: fetched.money,
+        status: fetched.status,
+        metadata: fetched.metadata,
+        raw_event: trigger.raw_event,
+        last_event_id: trigger.event_id,
+        parent_external_id: fetched.parent_external_id,
+        provider_ts: trigger.provider_ts,
+    });
+    process_payment_event(pool, &payment, actor).await
 }
 
 /// Log an audit entry for events we don't upsert (charges, unknown).

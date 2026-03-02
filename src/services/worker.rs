@@ -1,10 +1,10 @@
 use {
     crate::domain::error::PipelineError,
     crate::domain::id::{EventId, ExternalId},
-    crate::domain::payment::WebhookTrigger,
+    crate::domain::payment::PaymentTrigger,
     crate::domain::provider::PaymentProvider,
     crate::infra::postgres::job_repo,
-    crate::services::payment_pipeline::process_webhook,
+    crate::services::payment_pipeline::fetch_and_process_payment,
     sqlx::PgPool,
     std::sync::Arc,
     tokio::sync::watch,
@@ -57,7 +57,7 @@ async fn poll_once(pool: &PgPool, provider: &dyn PaymentProvider) -> Result<(), 
             }
         };
 
-        let trigger = WebhookTrigger::Payment {
+        let trigger = PaymentTrigger {
             event_id,
             event_type: job.event_type,
             external_id,
@@ -65,7 +65,7 @@ async fn poll_once(pool: &PgPool, provider: &dyn PaymentProvider) -> Result<(), 
             provider_ts: job.provider_ts,
         };
 
-        match process_webhook(pool, provider, trigger, "worker:stripe").await {
+        match fetch_and_process_payment(pool, provider, trigger, "worker:stripe").await {
             Ok(result) => {
                 tracing::info!(job_id = %job.id, ?result, "job processed");
                 job_repo::complete(pool, job.id).await?;

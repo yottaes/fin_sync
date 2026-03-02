@@ -63,17 +63,20 @@ impl ExistingPayment {
 
 // ── Webhook trigger ──────────────────────────────────────────────────────────
 
-/// Signal extracted from a webhook event. The handler builds this; the service
-/// layer decides what to do (fetch from provider API or just log).
+/// Payment event data extracted from a webhook (PI or Refund).
+pub struct PaymentTrigger {
+    pub event_id: EventId,
+    pub event_type: String,
+    pub external_id: ExternalId,
+    pub raw_event: serde_json::Value,
+    pub provider_ts: i64,
+}
+
+/// Signal extracted from a webhook event. The handler builds this to dispatch
+/// between enqueue (payment) and sync processing (passthrough).
 pub enum WebhookTrigger {
-    /// PI or Refund — fetch current state from provider API.
-    Payment {
-        event_id: EventId,
-        event_type: String,
-        external_id: ExternalId,
-        raw_event: serde_json::Value,
-        provider_ts: i64,
-    },
+    /// PI or Refund — enqueue for async processing.
+    Payment(PaymentTrigger),
     /// Charge / unknown — log only.
     Passthrough(PassthroughEvent),
 }
