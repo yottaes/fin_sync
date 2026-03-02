@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE payment_jobs\n        SET status = 'processing', updated_at = now()\n        WHERE id IN (\n            SELECT id FROM payment_jobs\n            WHERE status = 'pending' AND scheduled_at <= now()\n            ORDER BY scheduled_at\n            LIMIT $1\n            FOR UPDATE SKIP LOCKED\n        )\n        RETURNING id, event_id, object_id, event_type, provider_ts, raw_event, attempts\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "event_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "object_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "event_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "provider_ts",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "raw_event",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "attempts",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3a6afee0d0341558e04c5940759a1245e6a9b580df238a24320f1404fc7fd2ef"
+}

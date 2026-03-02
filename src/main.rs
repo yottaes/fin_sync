@@ -4,6 +4,8 @@ use {
         extract::DefaultBodyLimit,
         routing::{get, post},
     },
+    fin_sync::adapters::stripe::{client::StripeProvider, webhook::wh_handler},
+    fin_sync::services::worker::{run_reaper, run_worker},
     sqlx::postgres::PgPoolOptions,
     std::{env, sync::Arc, time::Duration},
     tokio::signal,
@@ -27,9 +29,7 @@ async fn main() {
         .await
         .expect("failed to connect to database");
 
-    let provider = Arc::new(fin_sync::adapters::stripe_client::StripeProvider::new(
-        &stripe_secret_key,
-    ));
+    let provider = Arc::new(StripeProvider::new(&stripe_secret_key));
 
     let state = fin_sync::AppState {
         pool,
@@ -37,12 +37,18 @@ async fn main() {
         provider,
     };
 
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    tokio::spawn(run_worker(
+        state.pool.clone(),
+        state.provider.clone(),
+        shutdown_rx.clone(),
+    ));
+    tokio::spawn(run_reaper(state.pool.clone(), shutdown_rx));
+
     let app = Router::new()
         .route("/", get(|| async { "ok" }))
-        .route(
-            "/webhook",
-            post(fin_sync::adapters::stripe_webhook::wh_handler),
-        )
+        .route("/webhook", post(wh_handler))
         .layer(DefaultBodyLimit::max(64 * 1024)) // 64 KB — Stripe events are typically <20 KB
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
@@ -53,7 +59,10 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     tracing::info!("listening on 0.0.0.0:3000");
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            let _ = shutdown_tx.send(true);
+        })
         .await
         .unwrap();
 }

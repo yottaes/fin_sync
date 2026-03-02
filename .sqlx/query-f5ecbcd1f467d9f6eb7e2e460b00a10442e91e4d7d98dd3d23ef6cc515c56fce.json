@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO payment_jobs (event_id, object_id, event_type, provider_ts, raw_event)\n        VALUES ($1, $2, $3, $4, $5)\n        ON CONFLICT (event_id) DO NOTHING\n        RETURNING true AS \"inserted!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "inserted!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int8",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "f5ecbcd1f467d9f6eb7e2e460b00a10442e91e4d7d98dd3d23ef6cc515c56fce"
+}

@@ -56,7 +56,7 @@ pub async fn setup_pool(db_name: &str) -> PgPool {
                     .run(&pool)
                     .await
                     .expect("failed to run migrations");
-                sqlx::query("TRUNCATE payments, audit_log, provider_events, reconciliations, external_records RESTART IDENTITY CASCADE")
+                sqlx::query("TRUNCATE payments, audit_log, provider_events, reconciliations, external_records, payment_jobs RESTART IDENTITY CASCADE")
                     .execute(&pool)
                     .await
                     .expect("truncate failed");

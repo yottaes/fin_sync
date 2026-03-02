@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE payment_jobs\n        SET attempts = attempts + 1,\n            last_error = $2,\n            status = CASE\n                WHEN attempts + 1 >= max_attempts THEN 'failed'\n                ELSE 'pending'\n            END,\n            scheduled_at = CASE\n                WHEN attempts + 1 >= max_attempts THEN scheduled_at\n                ELSE now() + make_interval(secs => power(2, attempts + 1)::int)\n            END,\n            updated_at = now()\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "991c2925e24d09b83db4d0dbf11432a97921de7957c55fa8f795f40e75410df0"
+}
