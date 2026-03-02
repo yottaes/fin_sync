@@ -118,12 +118,19 @@ migrations/          # 7 SQL migrations
 ## Running
 
 ```bash
+# Copy and fill in your Stripe keys
+cp .env.example .env
+
 # Requires Postgres running on localhost:5432
-export DATABASE_URL="postgresql://postgres:password@localhost:5432/postgres"
-export STRIPE_WEBHOOK_SECRET="whsec_..."
+# Requires Stripe CLI for local webhook forwarding
+stripe listen --forward-to localhost:3000/webhook  # note the whsec_ secret it prints
+
+# Edit .env with your values:
+#   DATABASE_URL=postgresql://postgres:password@localhost:5432/postgres
+#   STRIPE_WEBHOOK_SECRET=whsec_...   (from stripe listen output)
+#   STRIPE_SECRET_KEY=sk_test_...     (from Stripe dashboard)
 
 cargo run                # start server on :3000
-stripe listen --forward-to localhost:3000/webhook  # forward Stripe events locally
 cargo test               # run all 41 tests
 ```
 
