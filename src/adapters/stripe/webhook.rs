@@ -4,7 +4,7 @@ use {
         domain::{
             error::PipelineError,
             id::{EventId, ExternalId},
-            payment::{PassthroughEvent, WebhookTrigger},
+            payment::{PassthroughEvent, PaymentTrigger, WebhookTrigger},
         },
         infra::postgres::job_repo,
         services::payment_pipeline::handle_passthrough,
@@ -54,15 +54,15 @@ pub async fn wh_handler(
                 }
                 Err(e) => return Err(e.into()),
             };
-            WebhookTrigger::Payment {
+            WebhookTrigger::Payment(PaymentTrigger {
                 event_id: EventId::new(event_id.clone())?,
                 event_type: event_type.clone(),
                 external_id,
                 raw_event,
                 provider_ts: stripe_created,
-            }
+            })
         }
-        stripe::EventObject::Refund(ref refund) => {
+        stripe::EventObject::Refund(ref refund) if !event_type.starts_with("charge.refund") => {
             let external_id = match ExternalId::new(refund.id.to_string()) {
                 Ok(id) => id,
                 Err(PipelineError::Validation(msg)) => {
@@ -71,13 +71,13 @@ pub async fn wh_handler(
                 }
                 Err(e) => return Err(e.into()),
             };
-            WebhookTrigger::Payment {
+            WebhookTrigger::Payment(PaymentTrigger {
                 event_id: EventId::new(event_id.clone())?,
                 event_type: event_type.clone(),
                 external_id,
                 raw_event,
                 provider_ts: stripe_created,
-            }
+            })
         }
         stripe::EventObject::Charge(ref charge) => {
             let pi_id = charge
@@ -108,20 +108,14 @@ pub async fn wh_handler(
     };
 
     match trigger {
-        WebhookTrigger::Payment {
-            event_id: eid,
-            event_type: etype,
-            external_id: ext_id,
-            raw_event: raw,
-            provider_ts,
-        } => {
+        WebhookTrigger::Payment(t) => {
             let inserted = job_repo::enqueue(
                 &state.pool,
-                eid.as_str(),
-                ext_id.as_str(),
-                &etype,
-                provider_ts,
-                &raw,
+                t.event_id.as_str(),
+                t.external_id.as_str(),
+                &t.event_type,
+                t.provider_ts,
+                &t.raw_event,
             )
             .await?;
 
