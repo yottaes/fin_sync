@@ -5,64 +5,75 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-// Обертка (Newtype) для нашей доменной ошибки, чтобы реализовать для нее трейт Axum
-pub struct ApiError(pub PipelineError);
+/// HTTP error response. Not coupled to any specific domain error —
+/// can represent 404, 422, 500, or anything else.
+pub struct ApiError {
+    status: StatusCode,
+    code: &'static str,
+    message: String,
+}
 
-// Реализуем автоматическую конвертацию PipelineError -> ApiError
-impl From<PipelineError> for ApiError {
-    fn from(err: PipelineError) -> Self {
-        Self(err)
+impl ApiError {
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            code: "not_found",
+            message: message.into(),
+        }
     }
 }
 
-// Вся логика HTTP-ответов теперь живет в слое адаптеров
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        let (status, error_code, message) = match &self.0 {
+/// PipelineError → ApiError so `?` works in handlers.
+impl From<PipelineError> for ApiError {
+    fn from(err: PipelineError) -> Self {
+        match err {
             PipelineError::Validation(msg) => {
                 tracing::warn!("validation error: {msg}");
-                (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "validation_error",
-                    "request could not be processed".to_string(),
-                )
+                Self {
+                    status: StatusCode::UNPROCESSABLE_ENTITY,
+                    code: "validation_error",
+                    message: "request could not be processed".into(),
+                }
             }
-            PipelineError::WebhookSignature(_) => (
-                StatusCode::BAD_REQUEST,
-                "webhook_error",
-                "invalid webhook signature".to_string(),
-            ),
+            PipelineError::WebhookSignature(_) => Self {
+                status: StatusCode::BAD_REQUEST,
+                code: "webhook_error",
+                message: "invalid webhook signature".into(),
+            },
             PipelineError::Database(err) => {
                 tracing::error!("database error: {err}");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal_error",
-                    "internal error".to_string(),
-                )
+                Self {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    code: "internal_error",
+                    message: "internal error".into(),
+                }
             }
             PipelineError::Serialization(err) => {
                 tracing::error!("serialization error: {err}");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal_error",
-                    "internal error".to_string(),
-                )
+                Self {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    code: "internal_error",
+                    message: "internal error".into(),
+                }
             }
             PipelineError::Provider(err) => {
                 tracing::error!("provider error: {err}");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "provider_error",
-                    "internal error".to_string(),
-                )
+                Self {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    code: "provider_error",
+                    message: "internal error".into(),
+                }
             }
-        };
+        }
+    }
+}
 
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
         let body = serde_json::json!({
-            "error_code": error_code,
-            "message": message,
+            "error_code": self.code,
+            "message": self.message,
         });
-
-        (status, Json(body)).into_response()
+        (self.status, Json(body)).into_response()
     }
 }

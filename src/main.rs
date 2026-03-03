@@ -1,15 +1,12 @@
 use {
-    axum::{
-        Router,
-        extract::DefaultBodyLimit,
-        routing::{get, post},
+    fin_sync::{
+        adapters::stripe::client::StripeProvider,
+        services::worker::{run_reaper, run_worker},
+        transport::http::router,
     },
-    fin_sync::adapters::stripe::{client::StripeProvider, webhook::wh_handler},
-    fin_sync::services::worker::{run_reaper, run_worker},
     sqlx::postgres::PgPoolOptions,
     std::{env, sync::Arc, time::Duration},
     tokio::signal,
-    tower_http::timeout::TimeoutLayer,
 };
 
 #[tokio::main]
@@ -46,15 +43,7 @@ async fn main() {
     ));
     tokio::spawn(run_reaper(state.pool.clone(), shutdown_rx));
 
-    let app = Router::new()
-        .route("/", get(|| async { "ok" }))
-        .route("/webhook", post(wh_handler))
-        .layer(DefaultBodyLimit::max(64 * 1024)) // 64 KB — Stripe events are typically <20 KB
-        .layer(TimeoutLayer::with_status_code(
-            axum::http::StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(30),
-        ))
-        .with_state(state);
+    let app = router::build(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     tracing::info!("listening on 0.0.0.0:3000");
