@@ -1,8 +1,11 @@
 use {
-    super::audit::NewAuditEntry,
-    super::error::PipelineError,
-    super::id::{EventId, ExternalId},
-    super::money::Money,
+    super::{
+        audit::NewAuditEntry,
+        error::PipelineError,
+        id::{EventId, ExternalId},
+        money::Money,
+    },
+    crate::domain::money::Currency,
     serde::{Deserialize, Serialize},
     std::fmt,
     uuid::Uuid,
@@ -150,6 +153,7 @@ impl TryFrom<&str> for PaymentStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum PaymentDirection {
     Inbound,
     Outbound,
@@ -176,6 +180,35 @@ impl TryFrom<&str> for PaymentDirection {
             ))),
         }
     }
+}
+
+// ── Response ────────────────────────────────────────────────────────────
+#[derive(Debug, Serialize)]
+pub struct PaymentView {
+    pub id: ExternalId,
+    pub source: String,
+    pub status: PaymentStatus,
+    pub amount: i64,
+    pub currency: Currency,
+    pub direction: PaymentDirection,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+// ── Filters ─────────────────────────────────────────────────────────────
+#[derive(Debug, Deserialize)]
+pub struct PaymentFilters {
+    pub source: Option<String>,
+    pub status: Option<PaymentStatus>,
+    pub amount: Option<i64>,
+    pub amount_min: Option<i64>,
+    pub amount_max: Option<i64>,
+    pub currency: Option<Currency>,
+    pub direction: Option<PaymentDirection>,
+    pub start_date: Option<chrono::DateTime<chrono::Utc>>,
+    pub end_date: Option<chrono::DateTime<chrono::Utc>>,
+    pub limit: Option<u64>,
+    pub offset: Option<i64>,
 }
 
 /// Named params for constructing a NewPayment. All fields explicit at the call site.

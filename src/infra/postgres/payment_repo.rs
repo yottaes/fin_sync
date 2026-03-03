@@ -1,6 +1,14 @@
 use {
-    crate::domain::error::PipelineError,
-    crate::domain::payment::{ExistingPayment, NewPayment, PaymentStatus},
+    crate::domain::{
+        error::PipelineError,
+        id::ExternalId,
+        money::Currency,
+        payment::{
+            ExistingPayment, NewPayment, PaymentDirection, PaymentFilters, PaymentStatus,
+            PaymentView,
+        },
+    },
+    sqlx::PgPool,
     uuid::Uuid,
 };
 
@@ -144,4 +152,102 @@ pub async fn touch_event_with_ts(
     .execute(&mut **tx)
     .await?;
     Ok(())
+}
+
+pub async fn get_payment_by_id(
+    pool: &PgPool,
+    id: ExternalId,
+) -> Result<Option<PaymentView>, PipelineError> {
+    let row = sqlx::query!(
+        r#"SELECT 
+            external_id, 
+            source, 
+            status, 
+            amount, 
+            currency, 
+            direction, 
+            updated_at, 
+            created_at
+           FROM payments
+           WHERE external_id = $1 
+        "#,
+        id.as_str()
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        None => Ok(None),
+        Some(r) => Ok(Some(PaymentView {
+            id: ExternalId::new(r.external_id)?,
+            source: r.source,
+            status: PaymentStatus::try_from(r.status.as_str())?,
+            amount: r.amount,
+            currency: Currency::try_from(r.currency.as_str())?,
+            direction: PaymentDirection::try_from(r.direction.as_str())?,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        })),
+    }
+}
+
+pub async fn get_list_payments(
+    pool: &PgPool,
+    filters: PaymentFilters,
+) -> Result<Vec<PaymentView>, PipelineError> {
+    let status = filters.status.map(|s| s.as_str().to_owned());
+    let currency = filters.currency.map(|c| c.as_str().to_owned());
+    let direction = filters.direction.map(|d| d.as_str().to_owned());
+    let limit = filters.limit.expect("limit must be set by service layer") as i64;
+    let rows = sqlx::query!(
+        r#"
+            SELECT
+                external_id,
+                source,
+                status,
+                amount,
+                currency,
+                direction,
+                updated_at,
+                created_at
+            FROM payments
+            WHERE ($1::text IS NULL OR source = $1)
+                AND ($2::text IS NULL OR status = $2)
+                AND ($3::bigint IS NULL OR amount >= $3)
+                AND ($4::bigint IS NULL OR amount <= $4)
+                AND ($5::text IS NULL OR currency = $5)
+                AND ($6::text IS NULL OR direction = $6)
+                AND ($7::timestamptz IS NULL OR created_at >= $7)
+                AND ($8::timestamptz IS NULL OR created_at <= $8)
+            ORDER BY created_at DESC
+            LIMIT $9 OFFSET $10
+        "#,
+        filters.source,
+        status as Option<String>,
+        filters.amount_min,
+        filters.amount_max,
+        currency as Option<String>,
+        direction as Option<String>,
+        filters.start_date,
+        filters.end_date,
+        limit,
+        filters.offset,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|r| {
+            Ok(PaymentView {
+                id: ExternalId::new(r.external_id)?,
+                source: r.source,
+                status: PaymentStatus::try_from(r.status.as_str())?,
+                amount: r.amount,
+                currency: Currency::try_from(r.currency.as_str())?,
+                direction: PaymentDirection::try_from(r.direction.as_str())?,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+        })
+        .collect()
 }
