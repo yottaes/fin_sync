@@ -2,7 +2,7 @@ mod common;
 
 use common::*;
 use fin_sync::domain::payment::{PaymentStatus, ProcessResult};
-use fin_sync::services::payment_pipeline::process_payment_event;
+use fin_sync::services::payment::pipeline::process_payment_event;
 
 // ── 1. create_new_payment ──────────────────────────────────────────────────
 

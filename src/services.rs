@@ -1,2 +1,2 @@
-pub mod payment_pipeline;
+pub mod payment;
 pub mod worker;

@@ -7,7 +7,7 @@ use {
             payment::{PassthroughEvent, PaymentTrigger, WebhookTrigger},
         },
         infra::postgres::job_repo,
-        services::payment_pipeline::handle_passthrough,
+        services::payment::pipeline::handle_passthrough,
         transport::http::errors::ApiError,
     },
     axum::{Json, extract::State, http::HeaderMap},

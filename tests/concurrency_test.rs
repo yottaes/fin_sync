@@ -3,7 +3,7 @@ mod common;
 use common::*;
 use fin_sync::domain::id::{EventId, ExternalId};
 use fin_sync::domain::payment::{PassthroughEvent, PaymentStatus, ProcessResult};
-use fin_sync::services::payment_pipeline::{handle_passthrough, process_payment_event};
+use fin_sync::services::payment::pipeline::{handle_passthrough, process_payment_event};
 
 // ── 26. concurrent_duplicate_events ────────────────────────────────────────
 // 10 tasks send the same event_id. Exactly 1 should get Created, rest Duplicate.

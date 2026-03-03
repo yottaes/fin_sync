@@ -4,7 +4,7 @@ use {
     crate::domain::payment::PaymentTrigger,
     crate::domain::provider::PaymentProvider,
     crate::infra::postgres::job_repo,
-    crate::services::payment_pipeline::fetch_and_process_payment,
+    crate::services::payment::pipeline::fetch_and_process_payment,
     sqlx::PgPool,
     std::sync::Arc,
     tokio::sync::watch,

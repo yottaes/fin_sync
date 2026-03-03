@@ -1,0 +1,73 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                external_id,\n                source,\n                status,\n                amount,\n                currency,\n                direction,\n                updated_at,\n                created_at\n            FROM payments\n            WHERE ($1::text IS NULL OR source = $1)\n                AND ($2::text IS NULL OR status = $2)\n                AND ($3::bigint IS NULL OR amount >= $3)\n                AND ($4::bigint IS NULL OR amount <= $4)\n                AND ($5::text IS NULL OR currency = $5)\n                AND ($6::text IS NULL OR direction = $6)\n                AND ($7::timestamptz IS NULL OR created_at >= $7)\n                AND ($8::timestamptz IS NULL OR created_at <= $8)\n            ORDER BY created_at DESC\n            LIMIT $9 OFFSET $10\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "external_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "source",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "currency",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "direction",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "c1418f26d72dc675c0d7087b0083c25c763fec965b3124317f3c503d1bce5e25"
+}

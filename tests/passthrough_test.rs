@@ -3,7 +3,7 @@ mod common;
 use common::*;
 use fin_sync::domain::id::{EventId, ExternalId};
 use fin_sync::domain::payment::{PassthroughEvent, PaymentStatus};
-use fin_sync::services::payment_pipeline::{handle_passthrough, process_payment_event};
+use fin_sync::services::payment::pipeline::{handle_passthrough, process_payment_event};
 
 // ── 21. passthrough_logs_event ─────────────────────────────────────────────
 
