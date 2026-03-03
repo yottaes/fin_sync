@@ -12,6 +12,33 @@ Payment synchronization service that sits between payment providers and ERP syst
 - **Retry & recovery** — failed jobs retry with exponential backoff (2^attempts sec, max 5 attempts). A reaper resets stuck `processing` jobs after 2 minutes.
 - **Audit log** — every state change, skip, and anomaly is recorded in the same transaction as the payment mutation. Append-only.
 - **Compile-time SQL** — all production queries use `sqlx::query!` macros, verified against the real schema at build time. CI uses offline mode via `.sqlx/` metadata.
+- **Payment lookup API** — query individual payments by external ID or list with filters (status, currency, direction, amount range, date range, pagination).
+
+## API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/webhook` | Stripe webhook receiver. Signature-verified, enqueues payment events, logs passthrough. |
+| `GET` | `/payments/{id}` | Fetch a single payment by external ID (`pi_xxx` or `re_xxx`). Returns 404 if not found. |
+| `GET` | `/payments` | List payments with optional filters (see below). Returns `[]` if no matches. |
+
+### Filters for `GET /payments`
+
+All filters are optional query parameters:
+
+| Parameter | Type | Example |
+|-----------|------|---------|
+| `source` | string | `?source=stripe` |
+| `status` | enum | `?status=succeeded` |
+| `amount` | i64 (cents) | `?amount=2000` (exact match) |
+| `amount_min` | i64 (cents) | `?amount_min=1000` |
+| `amount_max` | i64 (cents) | `?amount_max=5000` |
+| `currency` | enum | `?currency=usd` |
+| `direction` | enum | `?direction=inbound` |
+| `start_date` | ISO 8601 | `?start_date=2026-03-01T00:00:00Z` |
+| `end_date` | ISO 8601 | `?end_date=2026-03-31T23:59:59Z` |
+| `limit` | u64 | `?limit=50` (default 20, max 100) |
+| `offset` | i64 | `?offset=20` |
 
 ## Architecture
 
@@ -88,7 +115,11 @@ src/
       webhook.rs     # signature verification, event dispatch, enqueue
       client.rs      # StripeProvider (API fetches)
   transport/
-    http/errors.rs   # PipelineError -> HTTP response mapping
+    http/
+      errors.rs          # ApiError -> HTTP response mapping
+      router.rs          # route definitions
+      payment/
+        lookup_handler.rs  # GET /payments handlers
   domain/
     payment.rs       # NewPayment, PaymentStatus, PaymentDirection, state machine
     money.rs         # MoneyAmount (i64 cents), Currency enum, Money
@@ -97,8 +128,10 @@ src/
     provider.rs      # PaymentProvider trait
     id.rs            # ExternalId, EventId newtypes
   services/
-    payment_pipeline.rs  # fetch_and_process_payment, process_payment_event, handle_passthrough
-    worker.rs            # run_worker (1s poll), run_reaper (60s stale reset)
+    payment/
+      pipeline.rs    # fetch_and_process_payment, process_payment_event, handle_passthrough
+      lookup.rs      # get_payment_by_id, get_payment_list
+    worker.rs        # run_worker (1s poll), run_reaper (60s stale reset)
   infra/
     postgres/
       payment_repo.rs  # insert/update/dedup queries
@@ -138,5 +171,5 @@ cargo test               # run all 41 tests
 
 - **ERP data intake** — endpoints to receive structured records from ERP systems, populate `external_records`.
 - **Reconciliation engine** — match payments against external records, write verdicts to `reconciliations`.
-- **Status API** — query payment state and reconciliation status from outside (the "knock and check" interface).
+- **Audit trail API** — query audit log history for a given payment.
 - **Vendor payments** — outbound payments beyond refunds (AP, invoices), likely via additional provider adapters.
